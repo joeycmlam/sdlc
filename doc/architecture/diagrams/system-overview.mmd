@@ -1,0 +1,33 @@
+graph TB
+    subgraph Frontend
+        UI[Next.js UI\napp/, components/, lib/]
+        Proxy[Next.js API routes\napp/api/*]
+    end
+
+    subgraph AgentRuntime
+        API[copilot-agent FastAPI\n/run /stream /sessions]
+        Worker[Arq workers\nrun_session_job]
+        Agents[Agent & skill markdown\nagents/ skills/]
+    end
+
+    subgraph Integrations
+        Atlassian[atlassian-bridge\n/jira /confluence]
+        GitHub[GitHub REST + Copilot]
+        Jira[Jira Cloud]
+        Confluence[Confluence Cloud]
+    end
+
+    subgraph State
+        Redis[(Redis\nsession + events + queue)]
+    end
+
+    UI --> Proxy
+    Proxy --> API
+    API --> Agents
+    API --> Redis
+    Worker --> Redis
+    Worker --> Agents
+    API --> GitHub
+    Worker --> Atlassian
+    Atlassian --> Jira
+    Atlassian --> Confluence
