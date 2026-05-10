@@ -10,7 +10,7 @@ import {
   UserX,
 } from "lucide-react";
 
-import { createGitHubIssue } from "@/lib/api";
+import { createGitHubIssue, fetchAgentContent } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type {
   CreateGitHubIssueResponse,
@@ -21,8 +21,16 @@ import {
   type AgentContextSource,
 } from "./agent-context-panel";
 import { GitHubAgentPicker } from "./github-agent-picker";
+import {
+  ServiceAgentPicker,
+  type ServiceAgentChoice,
+} from "./service-agent-picker";
 
-type AssignmentMode = "none" | "copilot" | "copilot-with-agent";
+type AssignmentMode =
+  | "none"
+  | "copilot"
+  | "copilot-with-agent"
+  | "copilot-with-service-agent";
 
 interface FormState {
   owner: string;
@@ -31,6 +39,7 @@ interface FormState {
   body: string;
   assignment: AssignmentMode;
   customAgent: GitHubCustomAgent | null;
+  serviceAgent: ServiceAgentChoice | null;
   additionalAssignees: string;
   labels: string;
 }
@@ -42,6 +51,7 @@ const INITIAL: FormState = {
   body: "",
   assignment: "copilot",
   customAgent: null,
+  serviceAgent: null,
   additionalAssignees: "",
   labels: "",
 };
@@ -70,6 +80,12 @@ const ASSIGNMENT_OPTIONS: {
     hint: "Assign to Copilot and pin a .agent.md profile (from .github/agents or org .github-private).",
     icon: Bot,
   },
+  {
+    id: "copilot-with-service-agent",
+    label: "Copilot + service agent (inline instructions)",
+    hint: "Assign to Copilot and inline a service agent profile (from services/copilot-agent/agents/) into the issue body.",
+    icon: Bot,
+  },
 ];
 
 function splitCsv(s: string): string[] {
@@ -77,6 +93,27 @@ function splitCsv(s: string): string[] {
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean);
+}
+
+function appendAgentInstructions(
+  body: string,
+  agentName: string,
+  agentFile: string,
+  agentContent: string,
+): string {
+  const trimmedBody = body.replace(/\s+$/, "");
+  const trimmedAgent = agentContent.trim();
+  return [
+    trimmedBody,
+    "",
+    "---",
+    "",
+    `## Agent instructions — ${agentName}`,
+    "",
+    `_Source: \`services/copilot-agent/agents/${agentFile}\`_`,
+    "",
+    trimmedAgent,
+  ].join("\n");
 }
 
 export function IssueCreator() {
@@ -101,14 +138,29 @@ export function IssueCreator() {
       setError("Pick a custom agent or switch to 'Default Copilot agent'.");
       return;
     }
+    if (form.assignment === "copilot-with-service-agent" && !form.serviceAgent) {
+      setError("Pick a service agent or switch to 'Default Copilot agent'.");
+      return;
+    }
 
     setSubmitting(true);
     try {
+      let body = form.body;
+      if (form.assignment === "copilot-with-service-agent" && form.serviceAgent) {
+        const detail = await fetchAgentContent(form.serviceAgent.file);
+        body = appendAgentInstructions(
+          form.body,
+          form.serviceAgent.name,
+          form.serviceAgent.file,
+          detail.content,
+        );
+      }
+
       const res = await createGitHubIssue({
         owner: form.owner.trim(),
         repo: form.repo.trim(),
         title: form.title.trim(),
-        body: form.body,
+        body,
         assign_to_copilot: form.assignment !== "none",
         additional_assignees: splitCsv(form.additionalAssignees),
         labels: splitCsv(form.labels),
@@ -263,6 +315,29 @@ export function IssueCreator() {
                 <p className="text-xs text-muted-foreground">
                   Selected agent&apos;s id is appended to the issue body so the cloud Copilot
                   picks the right profile.
+                </p>
+              </div>
+            )}
+
+            {form.assignment === "copilot-with-service-agent" && (
+              <div className="pt-2 border-t border-border space-y-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Service agent (inlined into issue body)
+                </div>
+                <ServiceAgentPicker
+                  value={form.serviceAgent?.file ?? null}
+                  onChange={(a) => update("serviceAgent", a)}
+                  onViewContext={(a) =>
+                    setContextSource({ kind: "local", file: a.file })
+                  }
+                  disabled={submitting}
+                />
+                <p className="text-xs text-muted-foreground">
+                  The agent&apos;s instructions are fetched from{" "}
+                  <code className="bg-secondary px-1 rounded">
+                    services/copilot-agent/agents/
+                  </code>{" "}
+                  and appended to the issue body before submission.
                 </p>
               </div>
             )}
