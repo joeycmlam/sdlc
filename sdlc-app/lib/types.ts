@@ -1,12 +1,3 @@
-export interface Message {
-  id: string;
-  role: "user" | "assistant" | "tool";
-  content: string;
-  timestamp: Date;
-  isStreaming?: boolean;
-  toolName?: string;
-}
-
 export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 
 export interface StreamEvent {

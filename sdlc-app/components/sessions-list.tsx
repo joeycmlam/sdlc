@@ -6,8 +6,11 @@ import useSWR from "swr";
 import { Loader2, RefreshCw, Trash2, ExternalLink } from "lucide-react";
 
 import { listSessions, deleteSession, getAgentDisplayName } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, formatSessionDuration } from "@/lib/utils";
 import { SessionStatusBadge } from "./session-status-badge";
+import type { SessionState } from "@/lib/types";
+
+const TERMINAL_STATES = new Set<SessionState>(["completed", "failed", "rejected"]);
 
 export function SessionsList() {
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -81,6 +84,7 @@ export function SessionsList() {
                   <th className="text-left p-3 font-medium">State</th>
                   <th className="text-left p-3 font-medium">Agent</th>
                   <th className="text-left p-3 font-medium">Instruction</th>
+                  <th className="text-left p-3 font-medium">Duration</th>
                   <th className="text-left p-3 font-medium">Updated</th>
                   <th className="text-right p-3 font-medium" />
                 </tr>
@@ -97,6 +101,12 @@ export function SessionsList() {
                     </td>
                     <td className="p-3 max-w-md truncate" title={s.instruction}>
                       {s.instruction}
+                    </td>
+                    <td className="p-3 text-xs text-muted-foreground whitespace-nowrap tabular-nums">
+                      {formatSessionDuration(
+                        s.created_at,
+                        TERMINAL_STATES.has(s.state) ? s.updated_at : null,
+                      )}
                     </td>
                     <td className="p-3 text-xs text-muted-foreground whitespace-nowrap">
                       {new Date(s.updated_at).toLocaleTimeString()}
