@@ -5,7 +5,7 @@
 Two separate projects currently cover different parts of the SDLC automation problem:
 
 - **`copilot-issue`** — a production-quality façade over GitHub REST/GraphQL that creates issues and assigns them to GitHub's cloud Copilot agent (`copilot-swe-agent[bot]`). Strong agent-resolution hierarchy, Pydantic models, BFF proxy UI. Weakness: no execution engine, no Jira, hardcoded skill registry.
-- **`mypoc`** — a working agentic execution platform using the GitHub Copilot SDK with SSE streaming, dynamic agent/skill registries, Jira CLI, and rich SDLC-domain agents. Weakness: no GitHub issue integration, stateless, no human approval gate.
+- **`sdlc-app`** — a working agentic execution platform using the GitHub Copilot SDK with SSE streaming, dynamic agent/skill registries, Jira CLI, and rich SDLC-domain agents. Weakness: no GitHub issue integration, stateless, no human approval gate.
 
 The goal is to redesign these into a unified platform that covers the full SDLC loop: Jira requirements → local agent analysis → BDD test generation → GitHub issue creation → cloud Copilot code generation → review → deploy.
 
@@ -78,7 +78,7 @@ The cloud Copilot agent can fetch any HTTPS URL, so a full Confluence URL works 
 
 ### New `read-confluence` skill
 
-Add `mypoc/services/copilot-agent/skills/read-confluence.skill.md` — system-prompt instructions for local agents on how to call `atlassian-bridge` to fetch a Confluence page and extract relevant context. Analogous to `read-jira.skill.md`.
+Add `sdlc-app/services/copilot-agent/skills/read-confluence.skill.md` — system-prompt instructions for local agents on how to call `atlassian-bridge` to fetch a Confluence page and extract relevant context. Analogous to `read-jira.skill.md`.
 
 ### How BA agent uses Confluence
 
@@ -203,8 +203,8 @@ graph TD
 | Service | Evolves From | Auth | Responsibility |
 |---|---|---|---|
 | `copilot-gateway` | `copilot-issue/api` | GitHub PAT (`repo`, `read:org`) | GitHub REST/GraphQL, cloud Copilot agent assignment, agent/skill resolution, KnowledgeRef injection |
-| `agent-runner` | `mypoc/services/copilot-agent` | Copilot CLI credential store | Local Copilot SDK execution, SSE streaming, session FSM, sub-agent delegation |
-| `atlassian-bridge` | `mypoc/services/jira-cli` | Atlassian API token (shared for Jira + Confluence) | Jira read/write + Confluence page fetch; single service since same auth |
+| `agent-runner` | `sdlc-app/services/copilot-agent` | Copilot CLI credential store | Local Copilot SDK execution, SSE streaming, session FSM, sub-agent delegation |
+| `atlassian-bridge` | `sdlc-app/services/jira-cli` | Atlassian API token (shared for Jira + Confluence) | Jira read/write + Confluence page fetch; single service since same auth |
 | `sdlc-ui` | Merge of both UIs | Headers via BFF | Chat view, Issue Console, Pipeline view, Approval Gate |
 
 ---
@@ -325,10 +325,10 @@ Mirror the existing `AgentStore` pattern in `copilot-issue/api/app/services.py`.
 This enables stateful SDLC pipelines and the human approval gate.
 
 **New files:**
-- `mypoc/services/copilot-agent/session_store.py` — `SessionStore` with in-memory dict, TTL cleanup, state machine: `pending → running → awaiting_approval → approved/rejected → completed/failed`
+- `sdlc-app/services/copilot-agent/session_store.py` — `SessionStore` with in-memory dict, TTL cleanup, state machine: `pending → running → awaiting_approval → approved/rejected → completed/failed`
 
 **Files to modify:**
-- `mypoc/services/copilot-agent/api_server.py` — add session endpoints:
+- `sdlc-app/services/copilot-agent/api_server.py` — add session endpoints:
   ```
   POST   /sessions
   GET    /sessions/{id}
@@ -338,7 +338,7 @@ This enables stateful SDLC pipelines and the human approval gate.
   GET    /sessions/{id}/result
   DELETE /sessions/{id}
   ```
-- `mypoc/services/copilot-agent/api_server.py` — keep `POST /stream` for stateless backward compat
+- `sdlc-app/services/copilot-agent/api_server.py` — keep `POST /stream` for stateless backward compat
 
 **Session model:**
 ```python
@@ -357,7 +357,7 @@ class Session(BaseModel):
 Allows local agents to hand off work to the cloud Copilot agent. **Required for the Priority Scenario.**
 
 **Files to modify:**
-- `mypoc/services/copilot-agent/agent_copilot.py` — add `CreateGithubIssueTool` to `_build_tools()`:
+- `sdlc-app/services/copilot-agent/agent_copilot.py` — add `CreateGithubIssueTool` to `_build_tools()`:
   ```python
   # Calls: copilot-gateway POST /repos/{owner}/{repo}/issues/create-and-assign
   # Schema: owner, repo, title, prompt, agent (optional), skills (optional list)
@@ -370,7 +370,7 @@ Create `sdlc-ui/` as a new Next.js App Router project.
 **Keep from `copilot-issue/ui`:**
 - TanStack Query v5, SettingsProvider, BFF proxy (`app/api/proxy/[...path]/route.ts`), `shared/schema.ts` Zod shapes
 
-**Keep from `mypoc`:**
+**Keep from `sdlc-app`:**
 - Chat components: `agent-chat.tsx`, `chat-container.tsx`, `chat-message.tsx`, `tool-execution-card.tsx`, `lib/api.ts` (SSE consumer)
 
 **New views:**
@@ -412,7 +412,7 @@ Adopt across all streaming endpoints:
 | In-memory sessions (no Redis) | V1 simplicity; agent runs are short-lived; add Redis when horizontal scaling is needed |
 | Keep `bash_exec` in agents | The Jira CLI path is battle-tested; HTTP to `jira-bridge` is an optional upgrade, not a forced migration |
 | Keep `agent.py` Azure AI Inference backend | Valuable for environments without the Copilot CLI |
-| Don't merge `copilot-issue` and `mypoc` | Clean separation of concerns; merging would create a large refactor for limited benefit |
+| Don't merge `copilot-issue` and `sdlc-app` | Clean separation of concerns; merging would create a large refactor for limited benefit |
 | `agent_assignment` optional in Step 4 | Supports both default (4a) and custom-agent (4b) assignment from the same endpoint |
 | Merge Jira + Confluence into `atlassian-bridge` | Same base URL, same API token, same auth header — no reason to split; reduces env var duplication |
 | `confluence` KnowledgeRef value = full URL | Caller already has the URL; injecting it directly avoids server-side URL construction and works for any Atlassian instance without mapping logic |
@@ -433,10 +433,10 @@ Adopt across all streaming endpoints:
 | `copilot-issue/ui/shared/schema.ts` | Add `confluence` to `knowledgeRefSchema` enum | 1 |
 | `atlassian-bridge/app/main.py` | New service — Jira + Confluence FastAPI | 1 |
 | `atlassian-bridge/app/confluence.py` | New — Confluence REST API v2 router | 1 |
-| `mypoc/services/copilot-agent/skills/read-confluence.skill.md` | New skill — fetch Confluence pages via atlassian-bridge | 1 |
-| `mypoc/services/copilot-agent/session_store.py` | New — SessionStore FSM | 3 |
-| `mypoc/services/copilot-agent/api_server.py` | Add session endpoints | 3 |
-| `mypoc/services/copilot-agent/agent_copilot.py` | Add `CreateGithubIssueTool` + `ConfluenceTool` | 4 |
+| `sdlc-app/services/copilot-agent/skills/read-confluence.skill.md` | New skill — fetch Confluence pages via atlassian-bridge | 1 |
+| `sdlc-app/services/copilot-agent/session_store.py` | New — SessionStore FSM | 3 |
+| `sdlc-app/services/copilot-agent/api_server.py` | Add session endpoints | 3 |
+| `sdlc-app/services/copilot-agent/agent_copilot.py` | Add `CreateGithubIssueTool` + `ConfluenceTool` | 4 |
 
 ---
 

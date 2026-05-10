@@ -1,4 +1,4 @@
-# Copilot Instructions for mypoc Monorepo
+# Copilot Instructions for sdlc-app Monorepo
 
 This is a full-stack monorepo workspace for proof of concept (POC) projects.
 

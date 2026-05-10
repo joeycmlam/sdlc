@@ -1,11 +1,11 @@
-# mypoc — Full-Stack Monorepo
+# sdlc-app — Full-Stack Monorepo
 
-A full-stack monorepo for proof-of-concept (POC) projects, combining a **Next.js** frontend with independent **Python** backend services.
+A full-stack monorepo for the SDLC AI agent platform, combining a **Next.js** frontend with independent **Python** backend services.
 
 ## Structure
 
 ```
-mypoc/
+sdlc-app/
 ├── app/               # Next.js App Router (pages, API routes, layouts)
 ├── components/        # React UI components
 ├── lib/               # Shared TypeScript utilities (utils.ts, types.ts, api.ts)

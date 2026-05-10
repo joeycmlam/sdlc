@@ -1,7 +1,7 @@
-# Plan: ATAF Gap Analysis & Reflection for mypoc
+# Plan: ATAF Gap Analysis & Reflection for sdlc-app
 
 ## TL;DR
-The mypoc repo is a functioning proof-of-concept with a Python FastAPI backend (copilot-agent), a Next.js chat UI, and a set of Jira/asset-management domain agents. Measured against ATAF-Design.md, the repo implements only the foundation layer (HTTP server, streaming, sub-agent delegation, some BDD skills) but is missing nearly every ATAF-specific component: the 6 testing agents, 14 tools, 9 skills, registry system, master orchestrator, approval gate FSM, session API, and reporting.
+The sdlc-app repo is a functioning proof-of-concept with a Python FastAPI backend (copilot-agent), a Next.js chat UI, and a set of Jira/asset-management domain agents. Measured against ATAF-Design.md, the repo implements only the foundation layer (HTTP server, streaming, sub-agent delegation, some BDD skills) but is missing nearly every ATAF-specific component: the 6 testing agents, 14 tools, 9 skills, registry system, master orchestrator, approval gate FSM, session API, and reporting.
 
 ---
 
@@ -67,7 +67,7 @@ The mypoc repo is a functioning proof-of-concept with a Python FastAPI backend (
 
 ---
 
-## What mypoc Has That ATAF Doesn't Specify (Value-Adds)
+## What sdlc-app Has That ATAF Doesn't Specify (Value-Adds)
 - Full Next.js chat UI (streaming, model selector, agent selector, tool cards, mobile)
 - Domain agents for asset management (BA, Jira Reader, Test Designer, Test Analyst) with MiFID II / UCITS knowledge
 - Dual Python agent implementations (Copilot SDK + Azure AI Inference)
