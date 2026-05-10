@@ -12,12 +12,12 @@ import {
   startSession,
   streamSessionEvents,
 } from "@/lib/api";
-import type { Session, SessionEvent } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import type { Session, SessionEvent, SessionState } from "@/lib/types";
+import { cn, formatSessionDuration } from "@/lib/utils";
 import { SessionStatusBadge } from "./session-status-badge";
 import { ToolExecutionCard } from "./tool-execution-card";
 
-const TERMINAL_STATES = new Set(["completed", "failed", "rejected"]);
+const TERMINAL_STATES = new Set<SessionState>(["completed", "failed", "rejected"]);
 
 export function SessionDetail({ id }: { id: string }) {
   const [transcript, setTranscript] = useState("");
@@ -142,6 +142,13 @@ export function SessionDetail({ id }: { id: string }) {
             <Field label="Max turns" value={String(session.max_turns)} />
             <Field label="Created" value={new Date(session.created_at).toLocaleString()} />
             <Field label="Updated" value={new Date(session.updated_at).toLocaleString()} />
+            <Field
+              label="Duration"
+              value={formatSessionDuration(
+                session.created_at,
+                TERMINAL_STATES.has(session.state) ? session.updated_at : null,
+              )}
+            />
           </div>
           <div className="mt-3 pt-3 border-t border-border">
             <div className="text-xs uppercase text-muted-foreground mb-1">Instruction</div>
