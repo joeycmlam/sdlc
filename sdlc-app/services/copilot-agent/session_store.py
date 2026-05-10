@@ -52,7 +52,7 @@ class Session(BaseModel):
     state: SessionState = "pending"
     agent_file: str
     instruction: str
-    model: str = "gpt-4o"
+    model: str = "claude-sonnet-4.5"
     max_turns: int = 20
     extra_context: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -126,7 +126,7 @@ class RedisSessionStore:
         self,
         agent_file: str,
         instruction: str,
-        model: str = "gpt-4o",
+        model: str = "claude-sonnet-4.5",
         max_turns: int = 20,
         extra_context: str = "",
         jira_url: str | None = None,

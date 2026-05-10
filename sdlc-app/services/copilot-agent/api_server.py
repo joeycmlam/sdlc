@@ -109,7 +109,7 @@ app.add_middleware(
 class RunRequest(BaseModel):
     agent_file: str
     instruction: str
-    model: str = "gpt-4o"
+    model: str = "claude-sonnet-4.5"
     max_turns: int = 20
     extra_context: Optional[str] = None
 
@@ -117,7 +117,7 @@ class RunRequest(BaseModel):
 class CreateSessionRequest(BaseModel):
     agent_file: str
     instruction: str
-    model: str = "gpt-4o"
+    model: str = "claude-sonnet-4.5"
     max_turns: int = 20
     extra_context: str = ""
     jira_url: Optional[str] = None
@@ -271,6 +271,52 @@ async def list_skills():
             for s in skill_registry.all().values()
         ]
     }
+
+
+# ---------------------------------------------------------------------------
+# Available LLM models — sourced from the local Copilot CLI via the SDK's
+# `models.list` JSON-RPC method. Cached in-process so the dropdown stays
+# snappy without paying the subprocess startup cost on every page load.
+# ---------------------------------------------------------------------------
+
+_MODELS_CACHE_TTL_SECONDS = 60 * 60  # 1 hour
+_models_cache: dict = {"data": None, "expires_at": 0.0}
+_models_cache_lock = asyncio.Lock()
+
+
+async def _fetch_models_from_cli() -> list[dict]:
+    """Query the Copilot CLI for its current model catalog."""
+    from copilot import CopilotClient  # local import: heavy package
+
+    async with CopilotClient() as client:
+        models = await client.list_models()
+
+    out: list[dict] = []
+    for m in models:
+        billing = getattr(m, "billing", None)
+        out.append({
+            "id": m.id,
+            "name": m.name,
+            "billing_multiplier": billing.multiplier if billing else None,
+        })
+    return out
+
+
+@app.get("/models")
+async def list_models(refresh: bool = Query(False, description="Bypass cache.")):
+    import time
+    async with _models_cache_lock:
+        now = time.time()
+        if not refresh and _models_cache["data"] is not None and now < _models_cache["expires_at"]:
+            return {"models": _models_cache["data"], "cached": True}
+        try:
+            data = await _fetch_models_from_cli()
+        except Exception as exc:
+            # Surface as 503 so the frontend can fall back to its own list.
+            raise HTTPException(status_code=503, detail=f"Failed to list models: {exc}")
+        _models_cache["data"] = data
+        _models_cache["expires_at"] = now + _MODELS_CACHE_TTL_SECONDS
+        return {"models": data, "cached": False}
 
 
 @app.post("/run")
