@@ -116,10 +116,46 @@ Produce a complete rewrite of the Jira ticket body in this structure, ready to p
 
 ---
 
+### Step 5 — Write Back to Jira
+
+After presenting the refined draft from Step 4, **ask the user for confirmation** before writing anything:
+
+> *"I'm ready to update PROJ-123. This will replace the ticket description and add a BA refinement comment. Proceed? (yes / no)"*
+
+Only proceed if the user explicitly confirms. Then run both commands from the `services/copilot-agent/` working directory:
+
+**5a. Update the ticket description** — pipe the refined body (sections: Summary, Context, Functional Requirements, Acceptance Criteria, Open Questions) via stdin:
+
+```bash
+python "../jira-cli/jira_cli.py" <TICKET_ID> --update-description - <<'EOF'
+<refined ticket body from Step 4>
+EOF
+```
+
+**5b. Add a BA refinement comment** — record what was changed and why:
+
+```bash
+python "../jira-cli/jira_cli.py" <TICKET_ID> --add-comment - <<'EOF'
+**BA Refinement — <today's date>**
+
+The ticket description has been updated by the Jira BA Refiner agent.
+
+Changes made:
+- <brief bullet list of what was added or improved, e.g. "Added FR-01–FR-03", "Rewrote AC in Given/When/Then form", "Added 3 open questions">
+
+All inferences are labelled *(inferred)* in the description. Please review and confirm accuracy before development begins.
+EOF
+```
+
+If either command exits non-zero, report the exact error and do **not** retry silently.
+
+---
+
 ## Constraints
 
 - Do **not** invent facts not present in or inferable from the ticket.
 - Label every inference with *(inferred)*.
 - Keep the refined summary to one sentence.
 - Do **not** run any command other than `jira_cli.py` and sub-agent invocations.
+- **Always ask for explicit user confirmation before writing back to Jira** (Step 5).
 - If the user has not provided a ticket ID, ask: *"Which Jira ticket would you like me to refine? (e.g. PROJ-123)"*
