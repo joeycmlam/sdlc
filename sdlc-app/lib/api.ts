@@ -7,6 +7,7 @@ import type {
   GitHubAgentContentResponse,
   GitHubAgentsResponse,
   HealthResponse,
+  ModelsResponse,
   Session,
   SessionEvent,
   SessionsResponse,
@@ -29,6 +30,13 @@ export async function fetchAgentContent(file: string): Promise<AgentDetail> {
 export async function checkHealth(): Promise<HealthResponse> {
   const res = await fetch("/api/health");
   if (!res.ok) throw new Error("Health check failed");
+  return res.json();
+}
+
+/** List LLM models the local Copilot CLI currently supports. */
+export async function fetchAvailableModels(): Promise<ModelsResponse> {
+  const res = await fetch("/api/models", { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to fetch models");
   return res.json();
 }
 

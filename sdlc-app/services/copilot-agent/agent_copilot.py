@@ -357,7 +357,7 @@ class AgentRunner:
         return last_content
 
     def _make_event_handler(self, state: TurnState, on_chunk=None, on_tool=None):
-        from copilot.session import SessionEventType
+        from copilot.generated.session_events import SessionEventType
 
         streaming = self._config.streaming
 

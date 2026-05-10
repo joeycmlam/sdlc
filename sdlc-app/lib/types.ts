@@ -193,3 +193,20 @@ export interface GitHubAgentContentResponse {
     agents?: string[];
   };
 }
+
+// ---------------------------------------------------------------------------
+// LLM models (sourced from Copilot CLI's models.list)
+// ---------------------------------------------------------------------------
+
+export interface AvailableModel {
+  id: string;
+  name: string;
+  /** GitHub Copilot premium-request multiplier (e.g. 1.0, 0.33, 0.0). */
+  billing_multiplier: number | null;
+}
+
+export interface ModelsResponse {
+  models: AvailableModel[];
+  cached?: boolean;
+  source?: "fallback";
+}

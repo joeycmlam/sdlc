@@ -20,7 +20,7 @@ function generateId(): string {
 export function AgentChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState("gpt-4o");
+  const [selectedModel, setSelectedModel] = useState("");
   const [maxTurns, setMaxTurns] = useState(20);
   const [isLoading, setIsLoading] = useState(false);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
@@ -37,7 +37,7 @@ export function AgentChat() {
 
   const handleSend = useCallback(
     async (content: string) => {
-      if (!selectedAgent || isLoading) return;
+      if (!selectedAgent || !selectedModel || isLoading) return;
 
       const userMessage: Message = {
         id: generateId(),
