@@ -1,0 +1,1 @@
+"""atlassian-bridge app package."""

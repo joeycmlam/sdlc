@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "atlassian-bridge"
+version = "1.0.0"
+description = "Jira + Confluence proxy service for the SDLC platform"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.7.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+atlassian-bridge = "app.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
