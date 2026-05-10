@@ -1,0 +1,109 @@
+<mxfile host="65bd71144e">
+    <diagram id="ataf-main" name="ATAF Architecture">
+        <mxGraphModel dx="871" dy="696" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" value="AutoTest Agent Framework (ATAF)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1;fontColor=#1a1a1a;" parent="1" vertex="1">
+                    <mxGeometry x="427" y="30" width="800" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer1-label" value="Entry Points" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#5F5E5A;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="85" width="120" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="cli" value="&lt;b&gt;Standalone CLI&lt;/b&gt;&lt;br/&gt;&lt;font color=&#39;#5F5E5A&#39;&gt;commander.js · yargs&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D3D1C7;strokeColor=#888780;fontColor=#2C2C2A;fontSize=12;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="80" width="200" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="sdk" value="&lt;b&gt;GitHub Copilot SDK&lt;/b&gt;&lt;br/&gt;&lt;font color=&#39;#5F5E5A&#39;&gt;@github/copilot-extensions&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D3D1C7;strokeColor=#888780;fontColor=#2C2C2A;fontSize=12;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="490" y="80" width="220" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="api" value="&lt;b&gt;REST / HTTP API&lt;/b&gt;&lt;br/&gt;&lt;font color=&#39;#5F5E5A&#39;&gt;Fastify microservice&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D3D1C7;strokeColor=#888780;fontColor=#2C2C2A;fontSize=12;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="760" y="80" width="200" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#888780;fillColor=#888780;shape=flexArrow;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="600" y="150" as="sourcePoint"/>
+                        <mxPoint x="600" y="190" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="layer2-label" value="Orchestration" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#5F5E5A;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="205" width="120" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="orch" value="&lt;b&gt;Master Orchestrator Agent&lt;/b&gt;&lt;br/&gt;&lt;font color=&#39;#534AB7&#39;&gt;Route tasks · Load agents, skills &amp;amp; tools · Drive approval gate · Track session state&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEEDFE;strokeColor=#7F77DD;fontColor=#26215C;fontSize=12;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="200" width="720" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#7F77DD;shape=flexArrow;fillColor=#7F77DD;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="600" y="270" as="sourcePoint"/>
+                        <mxPoint x="600" y="310" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="layer3-label" value="Registries" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#5F5E5A;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="325" width="120" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="areg" value="&lt;b&gt;Agent Registry&lt;/b&gt;&lt;br/&gt;&lt;font color=&#39;#0F6E56&#39;&gt;*.agent.md loader&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1F5EE;strokeColor=#1D9E75;fontColor=#04342C;fontSize=12;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="320" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="sreg" value="&lt;b&gt;Skill Registry&lt;/b&gt;&lt;br/&gt;&lt;font color=&#39;#0F6E56&#39;&gt;*.skill.md loader&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1F5EE;strokeColor=#1D9E75;fontColor=#04342C;fontSize=12;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="495" y="320" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="treg" value="&lt;b&gt;Tool Registry&lt;/b&gt;&lt;br/&gt;&lt;font color=&#39;#0F6E56&#39;&gt;*.tool.ts loader&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1F5EE;strokeColor=#1D9E75;fontColor=#04342C;fontSize=12;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="750" y="320" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer4-label" value="Testing Agents" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#5F5E5A;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="480" width="120" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="ag1" value="&lt;b&gt;Playwright Agent&lt;/b&gt;&lt;br/&gt;E2E · UI · Browser" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F1FB;strokeColor=#378ADD;fontColor=#042C53;fontSize=11;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="440" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="ag2" value="&lt;b&gt;API Test Agent&lt;/b&gt;&lt;br/&gt;REST · GraphQL" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F1FB;strokeColor=#378ADD;fontColor=#042C53;fontSize=11;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="495" y="440" width="205" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="ag3" value="&lt;b&gt;Performance Agent&lt;/b&gt;&lt;br/&gt;k6 · Artillery" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F1FB;strokeColor=#378ADD;fontColor=#042C53;fontSize=11;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="750" y="440" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="ag4" value="&lt;b&gt;Unit / Integration&lt;/b&gt;&lt;br/&gt;Jest · Vitest · pytest" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F1FB;strokeColor=#378ADD;fontColor=#042C53;fontSize=11;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="525" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="ag5" value="&lt;b&gt;Visual Regression&lt;/b&gt;&lt;br/&gt;Pixelmatch · Percy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F1FB;strokeColor=#378ADD;fontColor=#042C53;fontSize=11;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="495" y="525" width="205" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="ag6" value="&lt;b&gt;Cucumber Agent&lt;/b&gt;&lt;br/&gt;BDD · Data-driven" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F1FB;strokeColor=#378ADD;fontColor=#042C53;fontSize=11;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="750" y="525" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer5-label" value="Approval Gate" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#5F5E5A;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="655" width="120" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="gate" value="&lt;b&gt;Human Approval Gate&lt;/b&gt;&lt;br/&gt;&lt;font color=&#39;#854F0B&#39;&gt;Review · Approve / Reject · Re-run&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAEEDA;strokeColor=#BA7517;fontColor=#412402;fontSize=12;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="650" width="360" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer6-label" value="Output" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontStyle=1;fontColor=#5F5E5A;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="770" width="120" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="rpt" value="&lt;b&gt;Report Generator&lt;/b&gt;&lt;br/&gt;HTML · JUnit · Allure" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3DE;strokeColor=#639922;fontColor=#173404;fontSize=12;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="340" y="765" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="ci" value="&lt;b&gt;CI / CD Integration&lt;/b&gt;&lt;br/&gt;GitHub Actions · Webhooks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3DE;strokeColor=#639922;fontColor=#173404;fontSize=12;arcSize=12;" parent="1" vertex="1">
+                    <mxGeometry x="690" y="765" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="" style="endArrow=classic;html=1;strokeColor=#1D9E75;shape=flexArrow;fillColor=#1D9E75;" edge="1" parent="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="600" y="390" as="sourcePoint"/>
+                        <mxPoint x="600" y="430" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="9" value="" style="endArrow=classic;html=1;strokeColor=#378ADD;shape=flexArrow;fillColor=#378ADD;" edge="1" parent="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="600" y="600" as="sourcePoint"/>
+                        <mxPoint x="600" y="640" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="10" value="" style="endArrow=classic;html=1;strokeColor=#BA7517;shape=flexArrow;fillColor=#BA7517;" edge="1" parent="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="600" y="720" as="sourcePoint"/>
+                        <mxPoint x="600" y="760" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

@@ -1,0 +1,9 @@
+azure-ai-inference>=1.0.0b9
+github-copilot-sdk
+python-dotenv>=1.0
+fastapi>=0.111
+uvicorn[standard]>=0.29
+python-frontmatter>=1.1
+redis>=5.0
+arq>=0.26
+httpx>=0.27

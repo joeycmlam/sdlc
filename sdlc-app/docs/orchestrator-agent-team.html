@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="slides-format" content="viewport">
+  <title>AI Agentic Team Orchestrator Flow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <style type="text/tailwindcss">
+    @theme {
+      --color-bg: #0a0f1e;
+      --color-bg-deep: #060914;
+      --color-surface: #151b2f;
+      --color-text: #f8fafc;
+      --color-text-secondary: #dbe4f0;
+      --color-text-muted: #94a3b8;
+      --color-accent-1: #c9a84c;
+      --color-accent-2: #4cc9f0;
+      --color-accent-3: #22c55e;
+      --color-glass-bg: rgba(255,255,255,0.06);
+      --color-glass-border: rgba(255,255,255,0.10);
+      --color-vignette: rgba(0,0,0,0.45);
+      --font-display: 'Instrument Serif', Georgia, serif;
+      --font-body: 'Inter', sans-serif;
+    }
+  </style>
+  <style>
+    :root { --color-bg: #0a0f1e; --color-text: #f8fafc; --glow-color-rgb: 201,168,76; --font-body: 'Inter', sans-serif; }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { background: var(--color-bg); margin: 0; }
+    body { font-family: var(--font-body); color: var(--color-text); overflow: hidden; height: 100vh; width: 100vw; }
+    .deck { width: 100vw; height: 100vh; position: relative; }
+    .slide { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: var(--color-bg); display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; transform: scale(0.95); transition: opacity 0.7s ease, transform 0.7s ease; pointer-events: none; overflow: hidden; }
+    .slide.active { opacity: 1; transform: scale(1); pointer-events: all; }
+    .slide > .content { position: relative; z-index: 2; width: 100%; max-width: 1180px; padding: clamp(1.5rem, 3vw, 3rem); }
+    .nav-controls { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 16px; z-index: 100; background: rgba(10,15,30,0.65); backdrop-filter: blur(10px); padding: 10px 24px; border-radius: 40px; border: 1px solid rgba(255,255,255,0.1); }
+    .nav-btn { width: 40px; height: 40px; border: none; background: rgba(255,255,255,0.06); color: #c9a84c; border-radius: 50%; font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .slide-dots { display: flex; gap: 8px; }
+    .slide-dots .dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,0.15); cursor: pointer; transition: background 0.3s, transform 0.3s; }
+    .slide-dots .dot.active { background: #c9a84c; transform: scale(1.3); }
+    .slide-counter { font-size: 0.8rem; color: #94a3b8; min-width: 50px; text-align: center; }
+    .reveal { opacity: 0; transform: translateY(20px); }
+    .gradient-mesh { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+    .blob { position: absolute; border-radius: 50%; filter: blur(80px); animation: float-slow 12s ease-in-out infinite; }
+    .blob:nth-child(2) { animation: float-drift 16s ease-in-out infinite; }
+    .blob:nth-child(3) { animation: float-slow 18s ease-in-out infinite reverse; }
+    .blob:nth-child(4) { animation: float-drift 20s ease-in-out infinite reverse; }
+    @keyframes float-slow { 0% { transform: translate(0,0) scale(1); } 25% { transform: translate(60px,-50px) scale(1.12); } 50% { transform: translate(-40px,40px) scale(0.9); } 75% { transform: translate(50px,20px) scale(1.08); } 100% { transform: translate(0,0) scale(1);} }
+    @keyframes float-drift { 0% { transform: translate(0,0) scale(1) rotate(0deg);} 33% { transform: translate(-50px,-60px) scale(1.15) rotate(3deg);} 66% { transform: translate(40px,30px) scale(0.88) rotate(-2deg);} 100% { transform: translate(0,0) scale(1) rotate(0deg);} }
+    @keyframes glow-pulse { 0%,100% { text-shadow: 0 0 20px rgba(var(--glow-color-rgb), 0.45), 0 0 40px rgba(var(--glow-color-rgb), 0.18);} 50% { text-shadow: 0 0 32px rgba(var(--glow-color-rgb), 0.75), 0 0 64px rgba(var(--glow-color-rgb), 0.3);} }
+    @keyframes float { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-15px);} }
+    .text-glow { text-shadow: 0 0 20px rgba(var(--glow-color-rgb), 0.45), 0 0 40px rgba(var(--glow-color-rgb), 0.18); }
+    .stat-glow { text-shadow: 0 0 30px rgba(var(--glow-color-rgb), 0.6), 0 0 60px rgba(var(--glow-color-rgb), 0.25); }
+    .glow-pulse { animation: glow-pulse 3s ease-in-out infinite; }
+    .slide::before { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"); background-repeat: repeat; background-size: 256px 256px; opacity: 0.03; mix-blend-mode: overlay; }
+    .slide::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.45) 100%); }
+    .deco-shape { position: absolute; border-radius: 999px; opacity: 0.08; filter: blur(2px); z-index: 1; pointer-events: none; }
+    .process-node { border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); backdrop-filter: blur(14px); border-radius: 18px; padding: 14px 16px; min-height: 94px; box-shadow: 0 20px 50px rgba(0,0,0,0.18); }
+    .role-pill { display:inline-flex; align-items:center; gap:8px; padding:6px 12px; border-radius:999px; border:1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); font-size: 0.9rem; }
+    .flow-line { height: 2px; background: linear-gradient(90deg, rgba(201,168,76,0.1), rgba(201,168,76,0.95), rgba(76,201,240,0.9)); border-radius: 999px; }
+    .mini-card { border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); border-radius: 16px; padding: 14px 16px; min-height: 120px; }
+    .matrix-card { border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); border-radius: 18px; padding: 16px; }
+    .tool-chip { display:inline-block; padding:6px 10px; margin:4px 6px 0 0; border-radius:12px; background: rgba(76,201,240,0.12); border:1px solid rgba(76,201,240,0.22); font-size:0.82rem; }
+    .risk-chip { display:inline-block; padding:5px 9px; margin:4px 6px 0 0; border-radius:999px; background: rgba(34,197,94,0.12); border:1px solid rgba(34,197,94,0.22); font-size:0.78rem; }
+    .kanban-lane { border-radius: 18px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.04); padding: 14px; min-height: 310px; }
+    .kanban-card { border-left: 4px solid #c9a84c; border-radius: 14px; background: rgba(255,255,255,0.06); padding: 12px 14px; margin-top: 12px; }
+    .bar-track { height: 20px; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #c9a84c, #4cc9f0); width: 0; }
+    .odometer { display: inline-flex; overflow: hidden; gap: 0; }
+    .odometer-digit { display: flex; flex-direction: column; transition: transform 1.5s cubic-bezier(0.16, 1, 0.3, 1); line-height: 1; height: 1em; overflow: hidden; }
+    .odometer-digit span { display: block; text-align: center; }
+    .odometer-separator { opacity: 0.6; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.2s !important; } }
+  </style>
+</head>
+<body>
+<div class="mouse-spotlight" style="position:fixed;inset:0;z-index:99;pointer-events:none;"></div>
+<div class="deck">
+  <div class="slide slide-1 active" data-slide="1">
+    <div class="gradient-mesh">
+      <div class="blob" style="width:520px;height:520px;top:-120px;right:-120px;background:var(--color-accent-1);opacity:0.16"></div>
+      <div class="blob" style="width:360px;height:360px;bottom:-90px;left:-70px;background:var(--color-accent-2);opacity:0.13"></div>
+      <div class="blob" style="width:230px;height:230px;top:42%;left:15%;background:var(--color-accent-3);opacity:0.10"></div>
+      <div class="blob" style="width:180px;height:180px;top:18%;left:60%;background:#8b5cf6;opacity:0.10"></div>
+    </div>
+    <canvas class="particle-canvas" style="position:absolute;inset:0;z-index:1"></canvas>
+    <div class="content text-center">
+      <div class="text-[118px] mb-5 animate-[float_3s_ease-in-out_infinite] reveal">🤖</div>
+      <h1 class="font-display text-[clamp(2.8rem,6vw,5.4rem)] font-black bg-linear-to-br from-accent-1 via-accent-2 to-accent-1 bg-clip-text text-transparent tracking-tight mb-4 reveal">Orchestrator Agent for an AI Delivery Team</h1>
+      <p class="text-[clamp(1rem,1.7vw,1.35rem)] font-light text-text-muted tracking-[6px] uppercase reveal">Multi-agent flow for BA, architect, engineering, QA, security, DevOps and support</p>
+      <div class="mt-8 flex justify-center gap-3 flex-wrap reveal">
+        <span class="role-pill">JIRA</span><span class="role-pill">ServiceNow</span><span class="role-pill">GitHub</span><span class="role-pill">AKS</span><span class="role-pill">APIM</span><span class="role-pill">ADX + NewRelic</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide slide-2" data-slide="2">
+    <div class="gradient-mesh">
+      <div class="blob" style="width:340px;height:340px;top:-90px;right:-80px;background:var(--color-accent-1);opacity:0.08"></div>
+      <div class="blob" style="width:260px;height:260px;bottom:-70px;left:-50px;background:var(--color-accent-2);opacity:0.07"></div>
+    </div>
+    <div class="deco-shape" data-speed="0.03" style="width:180px;height:180px;right:7%;top:18%;background:rgba(201,168,76,0.18)"></div>
+    <div class="deco-shape" data-speed="0.05" style="width:120px;height:120px;left:12%;bottom:18%;background:rgba(76,201,240,0.14)"></div>
+    <div class="content">
+      <p class="uppercase tracking-[0.16em] text-text-muted text-sm mb-3 reveal">Operating model</p>
+      <h2 class="font-display text-[clamp(2.2rem,4.5vw,3.4rem)] font-bold reveal">Central supervisor, specialist agents, human checkpoints</h2>
+      <div class="grid grid-cols-3 gap-6 mt-8">
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition">
+          <div class="text-accent-1 text-3xl mb-2">1</div>
+          <h3 class="text-xl font-semibold mb-2">Single entry point</h3>
+          <p class="text-text-secondary text-[0.98rem] leading-relaxed">The orchestrator receives work from business demand, incidents, release requests, production alerts, or backlog changes and normalizes all of them into a common work packet.</p>
+        </div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition">
+          <div class="text-accent-2 text-3xl mb-2">2</div>
+          <h3 class="text-xl font-semibold mb-2">Role-based delegation</h3>
+          <p class="text-text-secondary text-[0.98rem] leading-relaxed">The orchestrator breaks the goal into tasks and sends each task to the best specialist agent: BA/PO, Architect, Engineer, QA, Security, DevOps, or TechSupport.</p>
+        </div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition">
+          <div class="text-accent-3 text-3xl mb-2">3</div>
+          <h3 class="text-xl font-semibold mb-2">Governed execution</h3>
+          <p class="text-text-secondary text-[0.98rem] leading-relaxed">Every handoff writes back to enterprise systems, applies policy gates, requests human approval on risky steps, and feeds telemetry back into continuous tuning.</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-4 gap-5 mt-8">
+        <div class="matrix-card reveal"><div class="text-text-muted text-xs uppercase tracking-[0.14em] mb-2">Why this pattern</div><div class="text-lg font-semibold">Best fit for regulated delivery</div><div class="text-sm text-text-secondary mt-2">Hub-and-spoke control, better traceability, easier audit, simpler rollback.</div></div>
+        <div class="matrix-card reveal"><div class="text-text-muted text-xs uppercase tracking-[0.14em] mb-2">Control plane</div><div class="text-lg font-semibold">Planning, memory, guardrails</div><div class="text-sm text-text-secondary mt-2">Intent routing, context package, policy checks, quality scoring.</div></div>
+        <div class="matrix-card reveal"><div class="text-text-muted text-xs uppercase tracking-[0.14em] mb-2">Execution plane</div><div class="text-lg font-semibold">Specialist agents</div><div class="text-sm text-text-secondary mt-2">Each agent owns one discipline, tools, outputs, and confidence thresholds.</div></div>
+        <div class="matrix-card reveal"><div class="text-text-muted text-xs uppercase tracking-[0.14em] mb-2">Observability plane</div><div class="text-lg font-semibold">ADX + NewRelic + feedback</div><div class="text-sm text-text-secondary mt-2">Prompt traces, workflow spans, incidents, release outcomes, and postmortems.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide slide-3" data-slide="3">
+    <div class="gradient-mesh">
+      <div class="blob" style="width:320px;height:320px;top:-90px;left:-70px;background:var(--color-accent-2);opacity:0.08"></div>
+      <div class="blob" style="width:260px;height:260px;bottom:-80px;right:-40px;background:var(--color-accent-1);opacity:0.08"></div>
+    </div>
+    <div class="content">
+      <p class="uppercase tracking-[0.16em] text-text-muted text-sm mb-3 reveal">Reference architecture</p>
+      <h2 class="font-display text-[clamp(2rem,4vw,3.1rem)] font-bold reveal">Logical layers and the main integration points</h2>
+      <div class="grid grid-cols-1 gap-4 mt-6">
+        <div class="process-node reveal">
+          <div class="text-xs uppercase tracking-[0.16em] text-text-muted mb-2">Input channels</div>
+          <div class="text-xl font-semibold mb-2">JIRA demand, ServiceNow incidents and releases, observability alerts, scheduled jobs</div>
+          <div class="text-sm text-text-secondary">New feature requests, defects, problem tickets, deployment windows, CA Scheduler events, log anomalies, API failures, and SRE alerts arrive through adapters.</div>
+        </div>
+        <div class="flow-line reveal"></div>
+        <div class="process-node reveal">
+          <div class="text-xs uppercase tracking-[0.16em] text-text-muted mb-2">Orchestrator control plane</div>
+          <div class="text-xl font-semibold mb-2">Intake → classify → decompose → assign → supervise → consolidate</div>
+          <div class="text-sm text-text-secondary">The orchestrator keeps the master plan, shared context, role assignment, approval state, deadline tracking, and confidence score for each task.</div>
+        </div>
+        <div class="flow-line reveal"></div>
+        <div class="grid grid-cols-4 gap-4">
+          <div class="process-node reveal"><div class="text-sm uppercase tracking-[0.14em] text-accent-1 mb-1">Analysis squad</div><div class="font-semibold">BA/PO Agent</div><div class="text-sm text-text-secondary mt-2">Refines requirements, user stories, acceptance criteria, release notes impact.</div></div>
+          <div class="process-node reveal"><div class="text-sm uppercase tracking-[0.14em] text-accent-2 mb-1">Design squad</div><div class="font-semibold">Architect Agent</div><div class="text-sm text-text-secondary mt-2">Defines solution flow, APIs, event model, NFRs, and tech choices.</div></div>
+          <div class="process-node reveal"><div class="text-sm uppercase tracking-[0.14em] text-accent-3 mb-1">Build squad</div><div class="font-semibold">Engineer Agent</div><div class="text-sm text-text-secondary mt-2">Creates code plan, PRs, refactors, unit tests, migration notes.</div></div>
+          <div class="process-node reveal"><div class="text-sm uppercase tracking-[0.14em] text-accent-1 mb-1">Run squad</div><div class="font-semibold">QA / Sec / DevOps / Support</div><div class="text-sm text-text-secondary mt-2">Validates, scans, deploys, monitors, and remediates incidents.</div></div>
+        </div>
+        <div class="flow-line reveal"></div>
+        <div class="process-node reveal">
+          <div class="text-xs uppercase tracking-[0.16em] text-text-muted mb-2">Delivery systems</div>
+          <div class="text-xl font-semibold mb-2">GitHub, APIM, AKS, ServiceNow, ADX, NewRelic</div>
+          <div class="text-sm text-text-secondary">Outputs become code, pipeline runs, deployment manifests, API definitions, release approvals, telemetry dashboards, and knowledge articles.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide slide-4" data-slide="4">
+    <div class="gradient-mesh">
+      <div class="blob" style="width:380px;height:380px;top:-120px;right:-100px;background:var(--color-accent-1);opacity:0.09"></div>
+      <div class="blob" style="width:220px;height:220px;bottom:-40px;left:10%;background:var(--color-accent-3);opacity:0.09"></div>
+    </div>
+    <canvas class="particle-canvas-ambient" style="position:absolute;inset:0;z-index:1"></canvas>
+    <div class="content">
+      <p class="uppercase tracking-[0.16em] text-text-muted text-sm mb-3 reveal">End-to-end flow</p>
+      <h2 class="font-display text-[clamp(2rem,4vw,3.2rem)] font-bold reveal">Orchestrator process from request to production learning</h2>
+      <div class="grid grid-cols-4 gap-4 mt-8">
+        <div class="kanban-lane reveal">
+          <div class="text-sm uppercase tracking-[0.14em] text-accent-1 mb-2">Phase 1</div>
+          <div class="text-xl font-semibold">Intake</div>
+          <div class="kanban-card"><strong>Trigger capture</strong><br><span class="text-sm text-text-secondary">JIRA epic, incident, API change, scheduled batch issue, release request.</span></div>
+          <div class="kanban-card"><strong>Context pull</strong><br><span class="text-sm text-text-secondary">Fetch linked tickets, service map, repos, APIs, logs, recent releases.</span></div>
+          <div class="kanban-card"><strong>Risk profile</strong><br><span class="text-sm text-text-secondary">Change type, customer impact, data sensitivity, time criticality.</span></div>
+        </div>
+        <div class="kanban-lane reveal">
+          <div class="text-sm uppercase tracking-[0.14em] text-accent-2 mb-2">Phase 2</div>
+          <div class="text-xl font-semibold">Planning</div>
+          <div class="kanban-card"><strong>Decompose work</strong><br><span class="text-sm text-text-secondary">Business, design, code, test, security, deployment, support tasks.</span></div>
+          <div class="kanban-card"><strong>Agent assignment</strong><br><span class="text-sm text-text-secondary">Pick specialist agent, language stack, tools, and SLA target.</span></div>
+          <div class="kanban-card"><strong>Approval gates</strong><br><span class="text-sm text-text-secondary">Human signoff for architecture, production releases, and high-risk changes.</span></div>
+        </div>
+        <div class="kanban-lane reveal">
+          <div class="text-sm uppercase tracking-[0.14em] text-accent-3 mb-2">Phase 3</div>
+          <div class="text-xl font-semibold">Execution</div>
+          <div class="kanban-card"><strong>Parallel delivery</strong><br><span class="text-sm text-text-secondary">Architect + Engineer + QA + Security can run in coordinated loops.</span></div>
+          <div class="kanban-card"><strong>Evidence capture</strong><br><span class="text-sm text-text-secondary">Store design docs, diffs, test packs, scan results, and deployment plans.</span></div>
+          <div class="kanban-card"><strong>Exception handling</strong><br><span class="text-sm text-text-secondary">Retry, reroute, rollback, or escalate to human owner if confidence drops.</span></div>
+        </div>
+        <div class="kanban-lane reveal">
+          <div class="text-sm uppercase tracking-[0.14em] text-accent-1 mb-2">Phase 4</div>
+          <div class="text-xl font-semibold">Operate</div>
+          <div class="kanban-card"><strong>Release & observe</strong><br><span class="text-sm text-text-secondary">Deploy to AKS, publish via APIM, update ServiceNow release record.</span></div>
+          <div class="kanban-card"><strong>Production feedback</strong><br><span class="text-sm text-text-secondary">ADX and NewRelic validate health, latency, errors, saturation, and business KPIs.</span></div>
+          <div class="kanban-card"><strong>Continuous learning</strong><br><span class="text-sm text-text-secondary">Write post-implementation lessons, reusable patterns, and policy updates.</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide slide-5" data-slide="5">
+    <div class="gradient-mesh">
+      <div class="blob" style="width:300px;height:300px;top:-70px;right:8%;background:var(--color-accent-2);opacity:0.08"></div>
+      <div class="blob" style="width:250px;height:250px;bottom:-70px;left:-40px;background:var(--color-accent-1);opacity:0.07"></div>
+    </div>
+    <div class="content">
+      <p class="uppercase tracking-[0.16em] text-text-muted text-sm mb-3 reveal">Specialists</p>
+      <h2 class="font-display text-[clamp(2rem,4vw,3rem)] font-bold reveal">Agent responsibilities, inputs, outputs, and enterprise tools</h2>
+      <div class="grid grid-cols-4 gap-4 mt-8">
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition"><div class="text-lg font-semibold mb-2">BA / PO Agent</div><div class="text-sm text-text-secondary">Turns business needs into epics, stories, acceptance criteria, dependency maps, and priority proposals.</div><div class="mt-3"><span class="tool-chip">JIRA</span><span class="tool-chip">ServiceNow</span></div></div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition"><div class="text-lg font-semibold mb-2">Architect Agent</div><div class="text-sm text-text-secondary">Creates target design, integration flow, NFRs, ADRs, API contracts, and rollout patterns for multiple stacks.</div><div class="mt-3"><span class="tool-chip">GitHub</span><span class="tool-chip">APIM</span><span class="tool-chip">AKS</span></div></div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition"><div class="text-lg font-semibold mb-2">Engineer Agent</div><div class="text-sm text-text-secondary">Implements code change sets, pull requests, unit tests, refactor suggestions, and migration tasks.</div><div class="mt-3"><span class="tool-chip">GitHub</span><span class="tool-chip">TypeScript</span><span class="tool-chip">Python</span><span class="tool-chip">Java</span><span class="tool-chip">.NET</span></div></div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition"><div class="text-lg font-semibold mb-2">QA Expert Agent</div><div class="text-sm text-text-secondary">Builds test strategy, traceability, test automation, regression packs, and release confidence score.</div><div class="mt-3"><span class="tool-chip">JIRA</span><span class="tool-chip">GitHub</span></div></div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition"><div class="text-lg font-semibold mb-2">Security Expert Agent</div><div class="text-sm text-text-secondary">Checks policy compliance, secrets handling, dependency risk, API exposure, and data protection controls.</div><div class="mt-3"><span class="tool-chip">GitHub</span><span class="tool-chip">APIM</span><span class="tool-chip">AKS</span></div></div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition"><div class="text-lg font-semibold mb-2">DevOps Agent</div><div class="text-sm text-text-secondary">Maintains CI/CD, IaC, manifests, environment promotion, release packages, and rollback plans.</div><div class="mt-3"><span class="tool-chip">GitHub</span><span class="tool-chip">AKS</span><span class="tool-chip">ServiceNow</span></div></div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition"><div class="text-lg font-semibold mb-2">TechSupport Agent</div><div class="text-sm text-text-secondary">Analyzes incidents, user impact, logs, known errors, and recommends workarounds or hotfix flows.</div><div class="mt-3"><span class="tool-chip">ServiceNow</span><span class="tool-chip">ADX</span><span class="tool-chip">NewRelic</span></div></div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition"><div class="text-lg font-semibold mb-2">Orchestrator Agent</div><div class="text-sm text-text-secondary">Coordinates all role agents, maintains plan state, resolves conflicts, and produces one auditable delivery narrative.</div><div class="mt-3"><span class="tool-chip">Policy Engine</span><span class="tool-chip">Memory</span><span class="tool-chip">Workflow Store</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide slide-6" data-slide="6">
+    <div class="gradient-mesh">
+      <div class="blob" style="width:330px;height:330px;top:-90px;right:-60px;background:var(--color-accent-3);opacity:0.08"></div>
+      <div class="blob" style="width:270px;height:270px;bottom:-80px;left:-50px;background:var(--color-accent-2);opacity:0.08"></div>
+    </div>
+    <div class="content">
+      <p class="uppercase tracking-[0.16em] text-text-muted text-sm mb-3 reveal">Tool map</p>
+      <h2 class="font-display text-[clamp(2rem,4vw,3rem)] font-bold reveal">Recommended system integration model</h2>
+      <div class="grid grid-cols-2 gap-6 mt-8">
+        <div class="matrix-card reveal">
+          <div class="text-lg font-semibold mb-3">Work management and release</div>
+          <div class="text-sm text-text-secondary leading-relaxed">JIRA should be the system of record for backlog, stories, tasks, and traceability across BA, Architecture, Engineering, QA, and Security. ServiceNow should remain the system of record for incident, change, and release approvals, including production deployment evidence and CAB workflow.</div>
+          <div class="mt-4"><span class="risk-chip">Bi-directional ticket sync</span><span class="risk-chip">Work item linkage</span><span class="risk-chip">Release evidence package</span></div>
+        </div>
+        <div class="matrix-card reveal">
+          <div class="text-lg font-semibold mb-3">Code and build delivery</div>
+          <div class="text-sm text-text-secondary leading-relaxed">GitHub stores prompts, ADRs, code, pipelines, tests, policies, and deployment manifests. The orchestrator opens PRs, requests reviews, tracks pipeline status, and tags artifacts to the originating JIRA issue and ServiceNow release record.</div>
+          <div class="mt-4"><span class="risk-chip">PR automation</span><span class="risk-chip">Policy-as-code</span><span class="risk-chip">Artifact provenance</span></div>
+        </div>
+        <div class="matrix-card reveal">
+          <div class="text-lg font-semibold mb-3">Runtime and API layer</div>
+          <div class="text-sm text-text-secondary leading-relaxed">AKS hosts the orchestrator platform and deployable services, while APIM governs external and internal APIs with security, throttling, versioning, and consumer visibility. The orchestrator should treat APIM contracts as release-controlled assets.</div>
+          <div class="mt-4"><span class="risk-chip">AKS deployment ring</span><span class="risk-chip">APIM contract check</span><span class="risk-chip">Canary and rollback</span></div>
+        </div>
+        <div class="matrix-card reveal">
+          <div class="text-lg font-semibold mb-3">Operations and intelligence</div>
+          <div class="text-sm text-text-secondary leading-relaxed">ADX acts as the long-horizon event and log analysis store, NewRelic provides application and infrastructure observability, and CA Scheduler feeds batch dependencies so the TechSupport and DevOps agents can reason about runtime behavior and timing windows.</div>
+          <div class="mt-4"><span class="risk-chip">Log correlation</span><span class="risk-chip">Alert triage</span><span class="risk-chip">Batch dependency awareness</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide slide-7" data-slide="7">
+    <div class="gradient-mesh">
+      <div class="blob" style="width:320px;height:320px;top:-80px;left:-60px;background:var(--color-accent-1);opacity:0.08"></div>
+      <div class="blob" style="width:220px;height:220px;bottom:0;right:10%;background:var(--color-accent-2);opacity:0.08"></div>
+    </div>
+    <div class="deco-shape" data-speed="0.03" style="width:200px;height:200px;right:6%;top:22%;background:rgba(76,201,240,0.14)"></div>
+    <div class="deco-shape" data-speed="0.04" style="width:100px;height:100px;left:7%;top:15%;background:rgba(34,197,94,0.14)"></div>
+    <div class="content">
+      <p class="uppercase tracking-[0.16em] text-text-muted text-sm mb-3 reveal">Cross-language strategy</p>
+      <h2 class="font-display text-[clamp(2rem,4vw,3rem)] font-bold reveal">How the orchestrator handles TypeScript, Python, Java, and .NET teams</h2>
+      <div class="grid grid-cols-3 gap-5 mt-8">
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition">
+          <div class="text-lg font-semibold mb-2">Capability routing</div>
+          <p class="text-sm text-text-secondary leading-relaxed">Each engineer agent should expose language capabilities, framework metadata, repo ownership, testing conventions, and deployment target so the orchestrator selects the correct implementation path.</p>
+        </div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition">
+          <div class="text-lg font-semibold mb-2">Shared quality contract</div>
+          <p class="text-sm text-text-secondary leading-relaxed">Keep common gates for architecture compliance, secrets scanning, SBOM, unit coverage, API linting, and SLO thresholds while allowing stack-specific build commands and templates.</p>
+        </div>
+        <div class="mini-card reveal hover:-translate-y-1 hover:shadow-xl transition">
+          <div class="text-lg font-semibold mb-2">Reusable adapters</div>
+          <p class="text-sm text-text-secondary leading-relaxed">Standardize repository adapter, CI adapter, test adapter, deployment adapter, and observability adapter so every language squad plugs into the same orchestration contract.</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-4 gap-4 mt-6">
+        <div class="matrix-card reveal"><div class="font-semibold mb-2">TypeScript / JavaScript</div><div class="text-sm text-text-secondary">Node services, frontend gateways, APIM-facing APIs, lightweight worker tasks.</div></div>
+        <div class="matrix-card reveal"><div class="font-semibold mb-2">Python</div><div class="text-sm text-text-secondary">AI/ML jobs, automation services, batch analysis, agent tooling, data enrichment.</div></div>
+        <div class="matrix-card reveal"><div class="font-semibold mb-2">Java</div><div class="text-sm text-text-secondary">Core enterprise services, high-throughput APIs, scheduling integrations, legacy modernization.</div></div>
+        <div class="matrix-card reveal"><div class="font-semibold mb-2">.NET</div><div class="text-sm text-text-secondary">Business services, internal platforms, Windows-heavy estates, domain-specific back-office apps.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide slide-8" data-slide="8">
+    <div class="gradient-mesh">
+      <div class="blob" style="width:360px;height:360px;top:-100px;right:-100px;background:var(--color-accent-1);opacity:0.08"></div>
+      <div class="blob" style="width:240px;height:240px;bottom:-70px;left:-30px;background:var(--color-accent-2);opacity:0.08"></div>
+    </div>
+    <div class="content">
+      <p class="uppercase tracking-[0.16em] text-text-muted text-sm mb-3 reveal">Control gates</p>
+      <h2 class="font-display text-[clamp(2rem,4vw,3.1rem)] font-bold reveal">Governance, security, and release guardrails</h2>
+      <div class="grid grid-cols-3 gap-6 mt-8">
+        <div class="matrix-card reveal hover:-translate-y-1 hover:shadow-xl transition">
+          <div class="text-accent-1 text-2xl mb-2">A</div>
+          <div class="text-xl font-semibold mb-2">Policy before action</div>
+          <div class="text-sm text-text-secondary">No agent executes production-impacting changes without checking environment policy, approval state, blast radius, and rollback readiness.</div>
+        </div>
+        <div class="matrix-card reveal hover:-translate-y-1 hover:shadow-xl transition">
+          <div class="text-accent-2 text-2xl mb-2">B</div>
+          <div class="text-xl font-semibold mb-2">Human in the loop</div>
+          <div class="text-sm text-text-secondary">Require approval for target architecture, externally visible API contract changes, emergency releases, and security exceptions.</div>
+        </div>
+        <div class="matrix-card reveal hover:-translate-y-1 hover:shadow-xl transition">
+          <div class="text-accent-3 text-2xl mb-2">C</div>
+          <div class="text-xl font-semibold mb-2">Traceable evidence</div>
+          <div class="text-sm text-text-secondary">Every agent output should be versioned, linked to a ticket, and attached to the release package for audit and root-cause analysis.</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-6 mt-8">
+        <div class="mini-card reveal">
+          <div class="text-lg font-semibold mb-3">Recommended mandatory checks</div>
+          <div class="text-sm text-text-secondary leading-relaxed">Architecture review; secret and dependency scan; test pass; API backward compatibility check; AKS deployment health; APIM policy validation; ServiceNow release approval; post-deploy telemetry check.</div>
+        </div>
+        <div class="mini-card reveal">
+          <div class="text-lg font-semibold mb-3">Recommended fallback actions</div>
+          <div class="text-sm text-text-secondary leading-relaxed">Low confidence reroutes to another agent, missing data triggers context refill, policy violation blocks release, failed canary triggers rollback, and repeated incidents create a problem record plus knowledge article.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide slide-9" data-slide="9">
+    <div class="gradient-mesh">
+      <div class="blob" style="width:310px;height:310px;top:-90px;left:-80px;background:var(--color-accent-2);opacity:0.08"></div>
+      <div class="blob" style="width:250px;height:250px;bottom:-60px;right:-40px;background:var(--color-accent-1);opacity:0.08"></div>
+    </div>
+    <div class="content">
+      <p class="uppercase tracking-[0.16em] text-text-muted text-sm mb-3 reveal">Runtime control</p>
+      <h2 class="font-display text-[clamp(2rem,4vw,3rem)] font-bold reveal">Incident-to-remediation closed loop</h2>
+      <div class="grid grid-cols-2 gap-8 mt-8 items-center">
+        <div>
+          <div class="mini-card reveal mb-4"><div class="font-semibold mb-2">1. Detect</div><div class="text-sm text-text-secondary">NewRelic or ADX detects latency spike, exception burst, infra anomaly, or scheduled batch failure.</div></div>
+          <div class="mini-card reveal mb-4"><div class="font-semibold mb-2">2. Triage</div><div class="text-sm text-text-secondary">TechSupport agent correlates logs, release history, scheduler windows, and impacted APIs; orchestrator determines severity and route.</div></div>
+          <div class="mini-card reveal mb-4"><div class="font-semibold mb-2">3. Resolve</div><div class="text-sm text-text-secondary">Engineer, DevOps, and Security agents prepare patch, config fix, rollback, or traffic protection plan.</div></div>
+          <div class="mini-card reveal"><div class="font-semibold mb-2">4. Learn</div><div class="text-sm text-text-secondary">The orchestrator updates problem records, adds known error articles, and strengthens future routing and checks.</div></div>
+        </div>
+        <div class="reveal">
+          <div class="matrix-card mb-5">
+            <div class="text-sm uppercase tracking-[0.14em] text-text-muted mb-2">Operational readiness score</div>
+            <div class="text-[4rem] font-black stat-glow glow-pulse odometer" data-value="92"></div>
+            <div class="text-sm text-text-secondary mt-3">Composite signal from test pass, deployment success, alert noise, MTTR, and release quality.</div>
+          </div>
+          <div class="space-y-4">
+            <div><div class="flex justify-between text-sm mb-1"><span>Detection coverage</span><span>95%</span></div><div class="bar-track"><div class="bar-fill" data-width="95"></div></div></div>
+            <div><div class="flex justify-between text-sm mb-1"><span>Automated triage quality</span><span>88%</span></div><div class="bar-track"><div class="bar-fill" data-width="88"></div></div></div>
+            <div><div class="flex justify-between text-sm mb-1"><span>Safe auto-remediation rate</span><span>72%</span></div><div class="bar-track"><div class="bar-fill" data-width="72"></div></div></div>
+            <div><div class="flex justify-between text-sm mb-1"><span>Knowledge reuse</span><span>84%</span></div><div class="bar-track"><div class="bar-fill" data-width="84"></div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide slide-10" data-slide="10">
+    <div class="gradient-mesh">
+      <div class="blob" style="width:520px;height:520px;top:-120px;right:-80px;background:var(--color-accent-1);opacity:0.14"></div>
+      <div class="blob" style="width:320px;height:320px;bottom:-90px;left:-40px;background:var(--color-accent-2);opacity:0.12"></div>
+      <div class="blob" style="width:220px;height:220px;top:40%;left:18%;background:var(--color-accent-3);opacity:0.10"></div>
+    </div>
+    <canvas class="particle-canvas" style="position:absolute;inset:0;z-index:1"></canvas>
+    <div class="content text-center">
+      <div class="text-[98px] mb-5 animate-[float_3s_ease-in-out_infinite] reveal">🚀</div>
+      <h2 class="font-display text-[clamp(2.8rem,5vw,4.6rem)] font-black bg-linear-to-br from-accent-1 via-accent-2 to-accent-1 bg-clip-text text-transparent tracking-tight mb-4 reveal">Recommended implementation sequence</h2>
+      <p class="text-xl text-text-secondary max-w-4xl mx-auto reveal">Start with one orchestrator, seven specialist agents, JIRA plus GitHub plus ServiceNow integration, and a small number of governed production workflows before expanding to full autonomous remediation.</p>
+      <div class="grid grid-cols-4 gap-5 mt-10 text-left">
+        <div class="mini-card reveal"><div class="text-sm uppercase tracking-[0.14em] text-accent-1 mb-2">Wave 1</div><div class="font-semibold mb-2">Design foundation</div><div class="text-sm text-text-secondary">Role definitions, workflow schema, memory store, guardrails, audit model.</div></div>
+        <div class="mini-card reveal"><div class="text-sm uppercase tracking-[0.14em] text-accent-2 mb-2">Wave 2</div><div class="font-semibold mb-2">SDLC integration</div><div class="text-sm text-text-secondary">JIRA, GitHub, test pipeline, APIM contract management, ServiceNow release sync.</div></div>
+        <div class="mini-card reveal"><div class="text-sm uppercase tracking-[0.14em] text-accent-3 mb-2">Wave 3</div><div class="font-semibold mb-2">Operate in AKS</div><div class="text-sm text-text-secondary">Deploy agents on AKS, observe with ADX and NewRelic, implement canary + rollback.</div></div>
+        <div class="mini-card reveal"><div class="text-sm uppercase tracking-[0.14em] text-accent-1 mb-2">Wave 4</div><div class="font-semibold mb-2">Autonomous improvement</div><div class="text-sm text-text-secondary">Incident learning loops, playbook generation, confidence scoring, limited auto-remediation.</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="nav-controls">
+  <button class="nav-btn" onclick="changeSlide(-1)">&#8249;</button>
+  <div class="slide-dots" id="dots"></div>
+  <button class="nav-btn" onclick="changeSlide(1)">&#8250;</button>
+  <span class="slide-counter" id="counter">1 / 10</span>
+</div>
+<script>
+let current = 1;
+const total = document.querySelectorAll('.slide').length;
+const dotsContainer = document.getElementById('dots');
+const counter = document.getElementById('counter');
+for (let i = 1; i <= total; i++) { const dot = document.createElement('div'); dot.className = 'dot' + (i === 1 ? ' active' : ''); dot.onclick = () => goToSlide(i); dotsContainer.appendChild(dot); }
+function goToSlide(n) { const prev = document.querySelector('.slide.active'); const next = document.querySelector(`.slide[data-slide="${n}"]`); if (prev) prev.classList.remove('active'); if (next) { next.classList.add('active'); animateSlide(next); } current = n; updateNav(); }
+function changeSlide(dir) { let next = current + dir; if (next < 1) next = total; if (next > total) next = 1; goToSlide(next); }
+function updateNav() { document.querySelectorAll('.dot').forEach((d, i) => d.classList.toggle('active', i + 1 === current)); counter.textContent = current + ' / ' + total; }
+document.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); changeSlide(1); } if (e.key === 'ArrowLeft') { e.preventDefault(); changeSlide(-1); } });
+let touchStartX = 0;
+document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+document.addEventListener('touchend', (e) => { const diff = touchStartX - e.changedTouches[0].clientX; if (Math.abs(diff) > 50) changeSlide(diff > 0 ? 1 : -1); });
+function animateSlide(slide) {
+  slide.querySelectorAll('.reveal').forEach((el, i) => {
+    el.style.transition = 'none'; el.style.opacity = '0'; el.style.transform = 'translateY(20px)'; el.offsetHeight;
+    const delay = i * 0.08; el.style.transition = `opacity 0.35s ease ${delay}s, transform 0.35s ease ${delay}s`; el.style.opacity = '1'; el.style.transform = 'translateY(0px)';
+  });
+  animateSlideEffects(slide);
+}
+function animateSlideEffects(slide) {
+  slide.querySelectorAll('.odometer:not(.odo-init)').forEach(el => {
+    el.classList.add('odo-init');
+    const target = el.dataset.value || '';
+    el.innerHTML = '';
+    target.split('').forEach((char, i) => {
+      if (char === '.' || char === ',') { const sep = document.createElement('span'); sep.className = 'odometer-separator'; sep.textContent = char; el.appendChild(sep); return; }
+      const digit = parseInt(char, 10);
+      const col = document.createElement('div'); col.className = 'odometer-digit';
+      for (let n = 0; n <= 9; n++) { const s = document.createElement('span'); s.textContent = n; col.appendChild(s); }
+      col.style.transform = 'translateY(0)'; el.appendChild(col);
+      setTimeout(() => { col.style.transform = `translateY(-${digit}em)`; }, 200 + i * 150);
+    });
+  });
+  slide.querySelectorAll('.bar-fill:not(.fill-init)').forEach((bar, i) => { bar.classList.add('fill-init'); bar.style.width = '0%'; bar.style.transition = `width 0.6s ease ${i * 0.08}s`; bar.offsetHeight; bar.style.width = bar.dataset.width + '%'; });
+}
+document.addEventListener('mousemove', (e) => {
+  const spotlight = document.querySelector('.mouse-spotlight');
+  if (spotlight) spotlight.style.background = `radial-gradient(600px circle at ${e.clientX}px ${e.clientY}px, rgba(201,168,76,0.06), transparent 40%)`;
+});
+(function() {
+  let mouseX = window.innerWidth / 2, mouseY = window.innerHeight / 2; const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+  document.addEventListener('mousemove', (e) => { mouseX = e.clientX; mouseY = e.clientY; });
+  (function tick() {
+    const ox = (mouseX - cx) / cx, oy = (mouseY - cy) / cy;
+    document.querySelectorAll('.deco-shape').forEach(shape => { const speed = parseFloat(shape.dataset.speed) || 0.03; shape.style.transform = `translate(${ox * speed * 100}px, ${oy * speed * 100}px)`; });
+    requestAnimationFrame(tick);
+  })();
+})();
+window.initParticles = function(canvas, options) {
+  if (!canvas) return; const ctx = canvas.getContext('2d'); canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
+  const interactive = options.interactive !== false; const count = options.count || (interactive ? 55 : 18); let mx = -1000, my = -1000;
+  const particles = Array.from({ length: count }, () => ({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, vx: (Math.random() - 0.5) * 0.3, vy: (Math.random() - 0.5) * 0.3, size: Math.random() * 2.5 + 0.8, alpha: Math.random() * 0.35 + 0.1 }));
+  if (interactive) { canvas.addEventListener('mousemove', (e) => { const rect = canvas.getBoundingClientRect(); mx = e.clientX - rect.left; my = e.clientY - rect.top; }); canvas.addEventListener('mouseleave', () => { mx = -1000; my = -1000; }); }
+  (function animate() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    particles.forEach(p => {
+      if (interactive) { const dx = p.x - mx, dy = p.y - my, dist = Math.sqrt(dx * dx + dy * dy) || 1; if (dist < 120) { const force = (120 - dist) / 120 * 2; p.vx += (dx / dist) * force * 0.1; p.vy += (dy / dist) * force * 0.1; } }
+      p.vx *= 0.98; p.vy *= 0.98; p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = canvas.width; if (p.x > canvas.width) p.x = 0; if (p.y < 0) p.y = canvas.height; if (p.y > canvas.height) p.y = 0;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fillStyle = `rgba(201,168,76,${p.alpha})`; ctx.fill();
+    });
+    requestAnimationFrame(animate);
+  })();
+};
+document.querySelectorAll('.particle-canvas').forEach(c => window.initParticles(c, { interactive: true, count: 55 }));
+document.querySelectorAll('.particle-canvas-ambient').forEach(c => window.initParticles(c, { interactive: false, count: 18 }));
+try { animateSlide(document.querySelector('.slide.active')); } catch(e) {}
+</script>
+</body>
+</html>

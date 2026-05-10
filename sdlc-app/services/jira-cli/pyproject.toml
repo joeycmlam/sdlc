@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jira-cli"
+version = "1.0.0"
+description = "CLI tool to fetch a Jira issue and output a structured Markdown document"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = [
+    "jira>=3.5.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.0.0",
+    "pdfminer.six>=20221105",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+]
+
+[project.scripts]
+jira-cli = "jira_cli:main"
+
+[tool.setuptools]
+py-modules = ["jira_cli"]

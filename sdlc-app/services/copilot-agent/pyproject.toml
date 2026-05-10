@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "copilot-agent"
+version = "1.0.0"
+description = "GitHub Models CLI agent powered by azure-ai-inference and OpenAI SDK"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = [
+    "azure-ai-inference>=1.0.0b9",
+    "github-copilot-sdk",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "python-frontmatter>=1.1",
+    "redis>=5.0",
+    "arq>=0.26",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+copilot-agent = "agent:main"
+agent-copilot = "agent_copilot:main"
+agent-api = "api_server:cli_main"
+agent-worker = "worker:cli_main"
+
+[tool.setuptools]
+py-modules = ["agent", "agent_copilot", "api_server", "registry", "session_store", "event_bus", "worker"]
+include-package-data = true
+
+[tool.setuptools.data-files]
+"share/copilot-agent/agents" = ["agents/assistant.md", "agents/coder.md"]

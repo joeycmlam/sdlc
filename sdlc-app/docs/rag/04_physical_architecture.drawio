@@ -1,0 +1,214 @@
+<mxfile host="65bd71144e">
+    <diagram id="physical" name="Physical Deployment Architecture">
+        <mxGraphModel dx="1452" dy="869" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1900" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="t1" value="Physical / Deployable Architecture — AI Agentic Team" style="text;html=1;fontSize=23;fontStyle=1;align=center;fontColor=#1E2761;fontFamily=Georgia;" parent="1" vertex="1">
+                    <mxGeometry x="350" y="20" width="800" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="t2" value="AKS cluster topology — namespaces, pods, services, and knowledge infrastructure" style="text;html=1;fontSize=13;align=center;fontColor=#8A94A6;" parent="1" vertex="1">
+                    <mxGeometry x="350" y="50" width="800" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="cluster" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=1;dashed=1;dashPattern=10 5;strokeColor=#1E2761;fillColor=none;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="20" y="80" width="1180" height="1400" as="geometry"/>
+                </mxCell>
+                <mxCell id="cluster_l" value="AKS cluster — ai-agent-platform" style="text;html=1;fontSize=17;fontStyle=1;fontColor=#1E2761;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="530" y="86" width="440" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_ing" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=3;fillColor=#F1EFE8;strokeColor=#5F5E5A;strokeWidth=0.8;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="120" width="1100" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_ing_l" value="ns: agent-ingress" style="text;html=1;fontSize=14;fontStyle=1;fontColor=#444441;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="76" y="126" width="200" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="ing_nginx" value="&lt;b&gt;NGINX ingress controller&lt;/b&gt;&lt;br&gt;Azure API Mgmt gateway" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#E6F1FB;strokeColor=#185FA5;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="150" width="230" height="46" as="geometry"/>
+                </mxCell>
+                <mxCell id="ing_wh" value="&lt;b&gt;Webhook receiver&lt;/b&gt;&lt;br&gt;JIRA · GitHub events" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#E6F1FB;strokeColor=#185FA5;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="330" y="150" width="230" height="46" as="geometry"/>
+                </mxCell>
+                <mxCell id="ing_auth" value="&lt;b&gt;Auth / rate limit sidecar&lt;/b&gt;&lt;br&gt;OAuth 2.0 + Azure APIM" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#E6F1FB;strokeColor=#185FA5;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="580" y="150" width="230" height="46" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_ing_orch" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#5F5E5A;strokeWidth=1;" parent="1" source="ns_ing" target="ns_orch" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_orch" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=3;fillColor=#EDE9FE;strokeColor=#7C3AED;strokeWidth=0.8;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="230" width="1100" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_orch_l" value="ns: agent-orchestration" style="text;html=1;fontSize=14;fontStyle=1;fontColor=#5B21B6;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="76" y="236" width="240" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="orch_pod" value="&lt;b&gt;orchestrator-pod&lt;/b&gt; (Deployment 2 replicas)&lt;br&gt;Python 3.12 · active/standby HA" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#7C3AED;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="264" width="310" height="52" as="geometry"/>
+                </mxCell>
+                <mxCell id="redis_pod" value="&lt;b&gt;task-state-store&lt;/b&gt; (StatefulSet)&lt;br&gt;Redis 7 · task lifecycle state" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#7C3AED;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="410" y="264" width="310" height="52" as="geometry"/>
+                </mxCell>
+                <mxCell id="kafka_pod" value="&lt;b&gt;event-broker&lt;/b&gt; (Kafka / Event Hub binding)&lt;br&gt;Topics: task · result · callback · knowledge" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#7C3AED;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="740" y="264" width="350" height="52" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_orch_workers" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#7C3AED;strokeWidth=1;" parent="1" source="ns_orch" target="ns_workers" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_workers" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=3;fillColor=#E1F5EE;strokeColor=#0F6E56;strokeWidth=0.8;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="350" width="1100" height="320" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_workers_l" value="ns: agent-workers" style="text;html=1;fontSize=14;fontStyle=1;fontColor=#085041;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="76" y="356" width="220" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="pod_ba" value="&lt;b&gt;ba-po-agent-pod&lt;/b&gt;&lt;br&gt;Deployment 1 replica&lt;br&gt;Python 3.12&lt;br&gt;Skills: req-parse · JIRA · KQL · doc" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#0F6E56;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="382" width="210" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="pod_arch" value="&lt;b&gt;architect-agent-pod&lt;/b&gt;&lt;br&gt;Deployment 1 replica&lt;br&gt;Python 3.12&lt;br&gt;Skills: code-gen · doc · git · review" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#0F6E56;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="310" y="382" width="210" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="pod_eng" value="&lt;b&gt;sr-engineer-pod&lt;/b&gt; (HPA 1→4)&lt;br&gt;Deployment · Node 20 + Python 3.12&lt;br&gt;Skills: code-gen · git · test · sec-scan" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#0F6E56;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="540" y="382" width="230" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="pod_qa" value="&lt;b&gt;qa-agent-pod&lt;/b&gt;&lt;br&gt;Deployment 1 replica&lt;br&gt;Node 20 + .NET 8&lt;br&gt;Skills: test-gen · git · KQL · observability" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#0F6E56;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="482" width="210" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="pod_sec" value="&lt;b&gt;sec-agent-pod&lt;/b&gt;&lt;br&gt;Deployment 1 replica&lt;br&gt;Python 3.12&lt;br&gt;Skills: sec-scan · git · KQL · test-gen" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#993C1D;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="310" y="482" width="210" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="pod_dev" value="&lt;b&gt;devops-agent-pod&lt;/b&gt;&lt;br&gt;Deployment 1 replica&lt;br&gt;Python 3.12 + Helm CLI&lt;br&gt;Skills: deploy · change-mgmt · observability" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#993C1D;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="540" y="482" width="230" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="sidecar_note" value="Each pod includes: skill-executor sidecar · MCP-tool-caller sidecar · vault-agent sidecar · Envoy proxy (mTLS service mesh)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;dashed=1;fillColor=none;strokeColor=#0F6E56;fontSize=11;fontStyle=2;fontColor=#085041;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="580" width="1060" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="hpa_note" value="HPA: sr-engineer-pod scales 1→4 on CPU utilisation + Kafka consumer lag. Network policy: agent-workers → tool-adapters (allow) · agent-workers ↔ internet (deny)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;dashed=1;fillColor=none;strokeColor=#0F6E56;fontSize=11;fontStyle=2;fontColor=#085041;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="618" width="1060" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_workers_skills" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#0F6E56;strokeWidth=1;" parent="1" source="ns_workers" target="ns_skills" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_skills" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=3;fillColor=#FBEAF0;strokeColor=#993556;strokeWidth=0.8;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="680" width="1100" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_skills_l" value="ns: agent-skills" style="text;html=1;fontSize=14;fontStyle=1;fontColor=#72243E;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="76" y="686" width="200" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="sk_reg" value="&lt;b&gt;skill-registry-svc&lt;/b&gt;&lt;br&gt;gRPC service 3 replicas" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#993556;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="714" width="250" height="52" as="geometry"/>
+                </mxCell>
+                <mxCell id="sk_pvc" value="&lt;b&gt;skill-store-pvc&lt;/b&gt;&lt;br&gt;Azure Files (skill definitions)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#993556;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="350" y="714" width="250" height="52" as="geometry"/>
+                </mxCell>
+                <mxCell id="sk_db" value="&lt;b&gt;skill-version-db&lt;/b&gt;&lt;br&gt;PostgreSQL (catalog + RBAC)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#993556;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="714" width="250" height="52" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_skills_kn" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#993556;strokeWidth=1;" parent="1" source="ns_skills" target="ns_kn" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_kn" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=3;fillColor=#E6F1FB;strokeColor=#185FA5;strokeWidth=1.5;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="800" width="1100" height="230" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_kn_l" value="ns: knowledge-store  — firm system knowledge + business knowledge" style="text;html=1;fontSize=14;fontStyle=1;fontColor=#0C447C;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="76" y="806" width="700" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="kn_qdrant" value="&lt;b&gt;vector-store (Qdrant)&lt;/b&gt; StatefulSet 3 replicas&lt;br&gt;System chunks: API contracts · ADRs · runbooks · schemas&lt;br&gt;Business chunks: domain rules · policies · workflows · glossary&lt;br&gt;Semantic similarity retrieval (cosine distance)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#185FA5;fontSize=10;shadow=1;align=left;spacingLeft=6;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="834" width="320" height="86" as="geometry"/>
+                </mxCell>
+                <mxCell id="kn_pg" value="&lt;b&gt;knowledge-catalog (PostgreSQL)&lt;/b&gt; StatefulSet&lt;br&gt;Schema registry · policy index · version history&lt;br&gt;Keyword + metadata filter retrieval&lt;br&gt;Owner · effective-date · TTL per document" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#185FA5;fontSize=10;shadow=1;align=left;spacingLeft=6;" parent="1" vertex="1">
+                    <mxGeometry x="416" y="834" width="324" height="86" as="geometry"/>
+                </mxCell>
+                <mxCell id="kn_rag" value="&lt;b&gt;rag-broker-svc&lt;/b&gt; Deployment 2 replicas&lt;br&gt;Query rewrite · hybrid retrieval · rerank&lt;br&gt;RBAC filter · context injection&lt;br&gt;gRPC + REST API" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FEF3C7;strokeColor=#D97706;fontSize=10;shadow=1;fontStyle=1;align=left;spacingLeft=6;" parent="1" vertex="1">
+                    <mxGeometry x="766" y="837" width="324" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="kn_ing_pod" value="&lt;b&gt;knowledge-ingestion-pod&lt;/b&gt; CronJob + event-driven&lt;br&gt;Sources: GitHub ADRs · Confluence · JIRA closed · post-mortems&lt;br&gt;Pipeline: parse → chunk → embed (LLM) → tag → version → upsert&lt;br&gt;Staleness TTL guard · conflict detection" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#EAF3DE;strokeColor=#3B6D11;fontSize=10;shadow=1;align=left;spacingLeft=6;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="928" width="660" height="82" as="geometry"/>
+                </mxCell>
+                <mxCell id="kn_rbac" value="&lt;b&gt;knowledge-rbac-policy&lt;/b&gt;&lt;br&gt;Per-agent read scopes&lt;br&gt;Namespace-level isolation" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FBEAF0;strokeColor=#993556;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="766" y="928" width="324" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_kn_shared" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#185FA5;strokeWidth=1;" parent="1" source="ns_kn" target="ns_shared" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_shared" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=3;fillColor=#FAEEDA;strokeColor=#D97706;strokeWidth=0.8;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="1040" width="1100" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_shared_l" value="ns: shared-services" style="text;html=1;fontSize=14;fontStyle=1;fontColor=#633806;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="76" y="1046" width="220" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="ss_llm" value="&lt;b&gt;llm-gateway&lt;/b&gt;&lt;br&gt;LiteLLM proxy&lt;br&gt;Model routing" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#D97706;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="1074" width="200" height="62" as="geometry"/>
+                </mxCell>
+                <mxCell id="ss_vault" value="&lt;b&gt;vault-agent&lt;/b&gt;&lt;br&gt;Azure Key Vault&lt;br&gt;Secret lease" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#D97706;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="296" y="1074" width="200" height="62" as="geometry"/>
+                </mxCell>
+                <mxCell id="ss_audit" value="&lt;b&gt;audit-sink&lt;/b&gt;&lt;br&gt;Fluentd → ADX&lt;br&gt;Every call logged" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#D97706;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="512" y="1074" width="200" height="62" as="geometry"/>
+                </mxCell>
+                <mxCell id="ss_nr" value="&lt;b&gt;NewRelic DaemonSet&lt;/b&gt;&lt;br&gt;APM · metrics&lt;br&gt;All pods" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#D97706;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="728" y="1074" width="200" height="62" as="geometry"/>
+                </mxCell>
+                <mxCell id="ss_hpa" value="&lt;b&gt;HPA controller&lt;/b&gt;&lt;br&gt;CPU + queue depth&lt;br&gt;eng-pod 1→4" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#FFFFFF;strokeColor=#D97706;fontSize=10;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="944" y="1074" width="200" height="62" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_shared_ta" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#D97706;strokeWidth=1;" parent="1" source="ns_shared" target="ns_ta" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_ta" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=3;fillColor=#E6F1FB;strokeColor=#185FA5;strokeWidth=0.8;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="1170" width="1100" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="ns_ta_l" value="ns: tool-adapters" style="text;html=1;fontSize=14;fontStyle=1;fontColor=#0C447C;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="76" y="1176" width="200" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="ta_jira" value="jira-mcp" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#185FA5;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="1204" width="120" height="36" as="geometry"/>
+                </mxCell>
+                <mxCell id="ta_gh" value="github-mcp" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#185FA5;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="216" y="1204" width="120" height="36" as="geometry"/>
+                </mxCell>
+                <mxCell id="ta_snow" value="snow-mcp" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#185FA5;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="352" y="1204" width="120" height="36" as="geometry"/>
+                </mxCell>
+                <mxCell id="ta_adx" value="adx-mcp" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#185FA5;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="488" y="1204" width="100" height="36" as="geometry"/>
+                </mxCell>
+                <mxCell id="ta_nr" value="nr-mcp" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#185FA5;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="604" y="1204" width="100" height="36" as="geometry"/>
+                </mxCell>
+                <mxCell id="ta_aks" value="aks-adapter" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#185FA5;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="720" y="1204" width="110" height="36" as="geometry"/>
+                </mxCell>
+                <mxCell id="ta_ca" value="ca-sched-mcp" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#185FA5;fontSize=11;shadow=1;" parent="1" vertex="1">
+                    <mxGeometry x="846" y="1204" width="120" height="36" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext" value="External SaaS endpoints (outside cluster)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=none;strokeColor=#8A94A6;fontSize=14;fontStyle=1;fontColor=#1E2761;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="1300" width="1100" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext1" value="JIRA Cloud" style="text;html=1;fontSize=12;fontColor=#8A94A6;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="1354" width="120" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext2" value="GitHub" style="text;html=1;fontSize=12;fontColor=#8A94A6;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="220" y="1354" width="100" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext3" value="ServiceNow" style="text;html=1;fontSize=12;fontColor=#8A94A6;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="340" y="1354" width="110" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext4" value="ADX" style="text;html=1;fontSize=12;fontColor=#8A94A6;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="470" y="1354" width="80" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext5" value="NewRelic" style="text;html=1;fontSize=12;fontColor=#8A94A6;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="570" y="1354" width="100" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext6" value="CA Scheduler" style="text;html=1;fontSize=12;fontColor=#8A94A6;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="690" y="1354" width="120" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext7" value="Confluence · SharePoint (knowledge source)" style="text;html=1;fontSize=12;fontColor=#185FA5;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="850" y="1354" width="320" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_ta_ext" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#5F5E5A;strokeWidth=1;" parent="1" source="ns_ta" target="ext" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dep_notes" value="&lt;b&gt;Deployment considerations:&lt;/b&gt; Azure Workload Identity per namespace · Network policy: workers → adapters (allow), workers ↔ internet (deny) · mTLS via Envoy · Skill hot-reload over gRPC stream · Knowledge store TTL staleness guard · All tool calls audited to ADX · Node pools: system + worker + (optional) gpu" style="rounded=1;whiteSpace=wrap;html=1;arcSize=4;fillColor=#F4F6FB;strokeColor=#8A94A6;fontSize=11;fontColor=#3D4663;strokeWidth=0.5;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="1390" width="1100" height="60" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
