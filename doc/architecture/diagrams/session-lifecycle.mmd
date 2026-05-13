@@ -1,0 +1,15 @@
+stateDiagram-v2
+    [*] --> pending
+    pending --> running
+    pending --> failed
+    running --> awaiting_approval
+    running --> completed
+    running --> failed
+    awaiting_approval --> approved
+    awaiting_approval --> rejected
+    awaiting_approval --> failed
+    approved --> running
+    approved --> completed
+    rejected --> completed
+    completed --> [*]
+    failed --> [*]
