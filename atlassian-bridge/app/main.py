@@ -11,6 +11,7 @@ Services:
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -36,9 +37,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "PATCH"],
     allow_headers=["Content-Type", "Authorization"],
 )
@@ -53,7 +60,8 @@ async def health() -> HealthResponse:
 
 
 def main() -> None:
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8002, reload=False)
+    port = int(os.getenv("PORT", "8002"))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False)
 
 
 if __name__ == "__main__":

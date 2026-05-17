@@ -1,0 +1,97 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SDLC Platform — docker-compose
+#
+# Usage:
+#   cp .env.example .env       # fill in secrets
+#   docker compose up --build  # first run
+#   docker compose up -d       # subsequent runs (detached)
+#
+# Services:
+#   redis            :6379   — session/stream store
+#   atlassian-bridge :8002   — Jira + Confluence proxy
+#   copilot-agent    :8001   — FastAPI + LLM agent runner
+#   arq-worker       (internal) — Arq job worker (same image, different CMD)
+#   frontend         :3000   — Next.js UI
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  atlassian-bridge:
+    build:
+      context: ./atlassian-bridge
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  copilot-agent:
+    build:
+      context: ./sdlc-app/services/copilot-agent
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      ATLASSIAN_BRIDGE_URL: http://atlassian-bridge:8002
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  arq-worker:
+    build:
+      context: ./sdlc-app/services/copilot-agent
+    command: ["agent-worker"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      ATLASSIAN_BRIDGE_URL: http://atlassian-bridge:8002
+    depends_on:
+      redis:
+        condition: service_healthy
+      copilot-agent:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./sdlc-app
+      args:
+        # Baked into the Next.js bundle at build time; also read at runtime
+        # by server-side API routes that proxy to the backend.
+        NEXT_PUBLIC_API_URL: http://copilot-agent:8001
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NEXT_PUBLIC_API_URL: http://copilot-agent:8001
+    ports:
+      - "3000:3000"
+    depends_on:
+      copilot-agent:
+        condition: service_healthy
+
+volumes:
+  redis_data:
