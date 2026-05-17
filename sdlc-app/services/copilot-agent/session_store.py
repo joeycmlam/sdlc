@@ -82,7 +82,7 @@ class Session(BaseModel):
 # Redis-backed store
 # ---------------------------------------------------------------------------
 
-_SESSION_TTL_SECONDS = 24 * 3600
+_SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", str(24 * 3600)))
 _KEY_PREFIX = "session:"
 _DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 

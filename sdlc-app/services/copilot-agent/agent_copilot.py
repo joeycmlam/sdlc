@@ -545,8 +545,9 @@ class AgentRunner:
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
+                _bridge = os.getenv("ATLASSIAN_BRIDGE_URL", "http://localhost:8002")
                 resp = await client.post(
-                    "http://localhost:8002/confluence/fetch",
+                    f"{_bridge}/confluence/fetch",
                     json={"url": url},
                 )
                 resp.raise_for_status()

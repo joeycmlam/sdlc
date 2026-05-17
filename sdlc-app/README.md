@@ -139,14 +139,14 @@ docker run -d --name redis -p 6379:6379 redis:7-alpine
 
 **Terminal 2 — Arq Worker:**
 ```bash
-cd services/copilot-agent
+cd sdlc-app/services/copilot-agent
 source .venv/bin/activate
 agent-worker
 ```
 
 **Terminal 3 — API Server:**
 ```bash
-cd services/copilot-agent
+cd sdlc-app/services/copilot-agent
 source .venv/bin/activate
 agent-api --port 8000
 ```
