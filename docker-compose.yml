@@ -43,12 +43,22 @@ services:
 
   copilot-agent:
     build:
-      context: ./sdlc-app/services/copilot-agent
+      context: ./sdlc-app/services
+      dockerfile: copilot-agent/Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
       ATLASSIAN_BRIDGE_URL: http://atlassian-bridge:8002
+      AGENTS_DIR: /app/agents
+      SKILLS_DIR: /app/skills
+      TEAMS_DIR: /app/teams
+    # Auth mode is selected automatically at runtime:
+    #   PAT mode: set GH_TOKEN in .env  → SubprocessConfig(github_token=...)
+    #   gh  mode: comment out GH_TOKEN and uncomment the volume below
+    #             (requires `gh auth login` on the host first)
+    # volumes:
+    #   - ~/.config/gh:/home/appuser/.config/gh:ro
     ports:
       - "8001:8001"
     depends_on:
@@ -63,13 +73,20 @@ services:
 
   arq-worker:
     build:
-      context: ./sdlc-app/services/copilot-agent
+      context: ./sdlc-app/services
+      dockerfile: copilot-agent/Dockerfile
     command: ["agent-worker"]
     restart: unless-stopped
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
       ATLASSIAN_BRIDGE_URL: http://atlassian-bridge:8002
+      AGENTS_DIR: /app/agents
+      SKILLS_DIR: /app/skills
+      TEAMS_DIR: /app/teams
+    # Auth mode mirrors copilot-agent above.
+    # volumes:
+    #   - ~/.config/gh:/home/appuser/.config/gh:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -87,6 +104,7 @@ services:
     env_file: .env
     environment:
       NEXT_PUBLIC_API_URL: http://copilot-agent:8001
+      PORT: "3000"
     ports:
       - "3000:3000"
     depends_on:

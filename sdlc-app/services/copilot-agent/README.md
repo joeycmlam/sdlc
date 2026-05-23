@@ -691,3 +691,548 @@ pip install dist/copilot_agent-1.0.0-py3-none-any.whl
 | Entry point `agent-worker` | `worker:cli_main` (`worker.py`) |
 | Bundled modules | `agent`, `agent_copilot`, `api_server`, `registry`, `session_store`, `event_bus`, `worker` |
 | Runtime deps (Redis path) | `redis>=5.0`, `arq>=0.26` (in addition to FastAPI/uvicorn) |
+
+---
+
+## Session Lifecycle & State Management
+
+### Session States
+
+Sessions follow a finite state machine (FSM) with validated transitions:
+
+```
+pending ──┬──> running ──┬──> awaiting_approval ──┬──> approved ──┐
+          │              │                         │               │
+          │              │                         └──> rejected ──┤
+          │              │                                         │
+          │              └────────────────────────────────────> running (loop)
+          │                                                        │
+          │                                                        ▼
+          └────────────────────────────────────────────────> completed
+          │
+          └──> failed (terminal)
+```
+
+**State Descriptions**:
+
+| State | Description | Next States |
+|-------|-------------|-------------|
+| `pending` | Session created, not yet enqueued | `running`, `failed` |
+| `running` | Worker actively executing agent turns | `awaiting_approval`, `completed`, `failed` |
+| `awaiting_approval` | Agent paused at approval checkpoint | `approved`, `rejected`, `failed` |
+| `approved` | Human approved, resuming | `running`, `completed` |
+| `rejected` | Human rejected, may terminate or retry | `running`, `completed` |
+| `completed` | Agent finished successfully (terminal) | — |
+| `failed` | Unrecoverable error (terminal) | — |
+
+### Execution Modes
+
+Sessions support two execution modes configured via `execution_mode` and `approval_policy`:
+
+#### 1. Autonomous Mode (`execution_mode: "autonomous"`)
+- All tools execute without pausing
+- No human approval required
+- Fastest execution, suitable for low-risk operations
+- Default mode
+
+```json
+{
+  "execution_mode": "autonomous",
+  "approval_policy": []
+}
+```
+
+#### 2. Human-Touch Mode (`execution_mode: "human_touch"`)
+- Agent pauses before executing tools matching `approval_policy` patterns
+- Human must approve/reject via `POST /sessions/{id}/approve`
+- Provides audit trail and control over sensitive operations
+- Recommended for production workflows
+
+```json
+{
+  "execution_mode": "human_touch",
+  "approval_policy": [
+    "create_github_issue",
+    "jira:write",
+    "bash_exec"
+  ]
+}
+```
+
+**Approval Policy Patterns**:
+- **Tool names**: Exact match (e.g., `"create_github_issue"`)
+- **Tool groups**: Prefix match (e.g., `"jira:write"` matches Jira update operations)
+- **Wildcards**: Future enhancement for regex patterns
+
+### Checkpoint Flow
+
+When a tool requires approval:
+
+1. **Agent identifies tool call** → Worker checks approval policy
+2. **Checkpoint created** → Session transitions to `awaiting_approval`
+3. **Checkpoint event published** → `GET /sessions/{id}/events` receives:
+   ```json
+   {
+     "type": "checkpoint",
+     "data": {
+       "checkpoint_id": "chk_abc123",
+       "tool_name": "create_github_issue",
+       "tool_args": {
+         "title": "Add /v2/quote endpoint",
+         "body": "..."
+       },
+       "reason": "Tool matches approval policy: create_github_issue"
+     }
+   }
+   ```
+4. **Human reviews** → UI displays checkpoint details
+5. **Decision made** → `POST /sessions/{id}/approve`:
+   ```json
+   {
+     "action": "approve",  // or "reject"
+     "comment": "LGTM, go ahead"
+   }
+   ```
+6. **Worker resumes**:
+   - **Approved** → Execute tool, transition to `running`, continue
+   - **Rejected** → Skip tool, log reason, transition to `running`, continue or abort
+
+### Session TTL
+
+- **Default TTL**: 24 hours (configurable via `SESSION_TTL_SECONDS`)
+- **Automatic cleanup**: Redis `EXPIRE` handles eviction
+- **Event stream TTL**: 24 hours, max 10,000 events per stream
+- **No background cleanup needed**: Redis handles eviction
+
+---
+
+## Team Manifests
+
+Team manifests (`teams/*.team.md`) enable multi-tenant operation by defining per-team defaults and constraints.
+
+### Team Configuration
+
+```yaml
+---
+id: core-platform
+name: "Core Platform Team"
+description: "Backend services and infrastructure"
+owner: "platform-lead@example.com"
+
+# LLM defaults
+default_model: claude-sonnet-4.5
+default_execution_mode: human_touch
+default_approval_policy:
+  - create_github_issue
+  - jira:write
+
+# Agent whitelist
+allowed_agents:
+  - ba
+  - test-designer
+  - coder
+
+# Enterprise tool scoping
+jira_project_key: PLATFORM
+confluence_space_key: PLAT
+---
+
+# Team Standards
+
+- All Jira tickets must have acceptance criteria
+- Code reviews required for all PRs
+- Test coverage ≥ 80%
+- Document architectural decisions in Confluence
+```
+
+### How Sessions Resolve Team Defaults
+
+When `POST /sessions` includes `team_id`:
+
+1. **Validate agent**: Check `agent_file` against `allowed_agents`
+2. **Apply defaults**: Fill in `model`, `execution_mode`, `approval_policy` if not provided
+3. **Inject context**: Prepend team guidance + Jira/Confluence scope to `extra_context`
+4. **Enforce policy**: Fail with 403 if agent not in whitelist
+
+**Example Request**:
+```json
+{
+  "team_id": "core-platform",
+  "agent_file": "ba.agent.md",
+  "instruction": "Analyze PLATFORM-123"
+  // model, execution_mode, approval_policy inherited from team manifest
+}
+```
+
+---
+
+## Agent Development Best Practices
+
+### 1. Agent File Structure
+
+```markdown
+---
+id: my-custom-agent
+name: "My Custom Agent"
+description: "One-line summary for UI and routing"
+triggers:
+  - "keyword|variant"
+skills: [relevant-skill-id]
+tools: [bash_exec, invoke_agent]
+---
+
+# Role & Context
+You are a [persona]. Your primary responsibility is [task].
+
+## Guidelines
+- [Guideline 1]
+- [Guideline 2]
+
+## Output Format
+[Expected output structure]
+
+## Examples
+[Example interactions]
+```
+
+### 2. System Prompt Best Practices
+
+- **Be specific**: Clear role definition and task boundaries
+- **Provide structure**: Define expected output format
+- **Include examples**: Show desired behavior
+- **Set constraints**: Turn budget, tool usage, escalation criteria
+- **Reference skills**: Leverage skill files for reusable knowledge
+
+### 3. Tool Usage Patterns
+
+**Prefer delegation over inline execution**:
+```markdown
+# ❌ Bad: Agent tries to do everything
+You can read Jira, analyze requirements, generate tests, and create PRs.
+
+# ✅ Good: Agent delegates to specialists
+- Use `read_jira` tool to fetch issue details
+- Use `invoke_agent(agent_file="test-designer.agent.md")` for test generation
+- Use `bash_exec` for final steps (commit, push)
+```
+
+**Guard against runaway execution**:
+```markdown
+## Turn Budget
+You have a maximum of 20 turns. Plan your work accordingly:
+- Turns 1-5: Gather context
+- Turns 6-15: Execute primary task
+- Turns 16-20: Verification and reporting
+
+If you exhaust your turn budget, provide a summary of work completed.
+```
+
+### 4. Skill File Best Practices
+
+- **Single responsibility**: One skill = one domain (BDD, Jira, testing framework)
+- **Self-contained**: Include all necessary context (no external dependencies)
+- **Versioned**: Update filename when making breaking changes (`bdd-pytest-v2.skill.md`)
+- **Examples**: Provide code snippets and templates
+
+### 5. Testing Agents Locally
+
+```bash
+# Quick validation
+python agent_copilot.py -a agents/my-agent.md -m gpt-4o -i "test instruction"
+
+# Extended workflow test
+python agent_copilot.py -a agents/my-agent.md -m gpt-4o \
+  -i "complex multi-step task" --max-turns 30
+
+# Interactive debugging
+python agent_copilot.py -a agents/my-agent.md -m gpt-4o --interactive
+```
+
+### 6. Monitoring Agent Performance
+
+Track key metrics:
+- **Turn efficiency**: Avg turns to completion
+- **Tool usage**: Which tools are invoked, success rate
+- **Approval rate**: % of checkpoints approved vs rejected
+- **Error rate**: Failed sessions / total sessions
+- **Latency**: Time from enqueue to completion
+
+**Example logging in agent files**:
+```markdown
+## Reporting
+At the end of each session, report:
+- Tasks completed: [list]
+- Tools used: [list with counts]
+- Turns consumed: [X/20]
+- Recommendations: [next steps]
+```
+
+---
+
+## Advanced Features
+
+### Sub-Agent Delegation
+
+Agents can delegate sub-tasks to specialized agents using the `invoke_agent` tool:
+
+```python
+# Parent agent (BA) delegates test generation
+result = await invoke_agent(
+    agent_file="test-designer.agent.md",
+    instruction="Generate BDD scenarios for SCRUM-123",
+    max_turns=15
+)
+```
+
+**Depth Limiting**:
+- Max recursion depth: 3 (configurable)
+- Sub-agents inherit reduced turn budget
+- Prevents infinite delegation loops
+
+**Use Cases**:
+- BA → Test Designer → Test Automator (3-level workflow)
+- Coder → Doc Writer (documentation generation)
+- Orchestrator → Multiple specialists (parallel execution)
+
+### Custom Tool Development
+
+Add custom tools by extending the tool registry in `agent_copilot.py`:
+
+```python
+@dataclass
+class Tool:
+    name: str
+    description: str
+    parameters: dict  # JSON Schema
+    
+    async def execute(self, **kwargs) -> str:
+        """Tool implementation"""
+        pass
+
+# Register custom tool
+runner.tools.append(
+    Tool(
+        name="query_database",
+        description="Execute SQL query against production database",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "SQL query"}
+            },
+            "required": ["query"]
+        }
+    )
+)
+```
+
+### Event-Driven Workflows
+
+Sessions publish events to Redis Streams for real-time integration:
+
+```python
+from event_bus import EventBus
+
+async with EventBus.from_url(REDIS_URL) as bus:
+    async for event in bus.subscribe(session_id):
+        if event["type"] == "tool_call":
+            # Trigger external workflow
+            await webhook.notify(event)
+        elif event["type"] == "checkpoint":
+            # Send approval request to Slack
+            await slack.send_approval_request(event)
+```
+
+### GitHub Cloud Agent Integration
+
+Create GitHub issues assigned to Copilot cloud agents:
+
+```bash
+curl -X POST http://localhost:8001/github/issues \
+  -H "Content-Type: application/json" \
+  -d '{
+    "owner": "my-org",
+    "repo": "my-repo",
+    "title": "Add /v2/quote endpoint",
+    "body": "See attached requirements...",
+    "assign_to_copilot": true,
+    "custom_agent": "https://github.com/my-org/.github/blob/main/copilot-instructions.md",
+    "labels": ["enhancement", "agent:backend"]
+  }'
+```
+
+**Custom Agent URL**: Points to a `.github` repo with Copilot instructions
+**Automatic Assignment**: GitHub's coding agent picks up the issue
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+#### Redis Connection Errors
+
+**Symptom**: `/health` returns `{"redis": false}`
+
+**Causes**:
+- Redis not running
+- Wrong `REDIS_URL`
+- Network/firewall blocking port 6379
+
+**Solutions**:
+```bash
+# Check Redis is running
+redis-cli ping  # Should return PONG
+
+# Test connection
+redis-cli -h localhost -p 6379 ping
+
+# Check REDIS_URL env var
+echo $REDIS_URL
+
+# Restart Redis
+docker restart redis
+# or: brew services restart redis
+```
+
+#### Worker Not Processing Jobs
+
+**Symptom**: Session stuck in `pending` or `running` state forever
+
+**Causes**:
+- No worker process running
+- Worker crashed
+- Redis connection lost
+
+**Solutions**:
+```bash
+# Check worker is running
+ps aux | grep agent-worker
+
+# Check worker logs
+docker logs arq-worker
+# or: tail -f worker.log
+
+# Restart worker
+docker compose restart arq-worker
+# or: agent-worker &
+
+# Check Arq queue depth
+redis-cli LLEN arq:queue
+```
+
+#### Authentication Failures
+
+**Symptom**: `gh: command not found` or `401 Unauthorized`
+
+**Causes**:
+- GitHub CLI not installed
+- Not authenticated with `gh auth login`
+- Token expired or revoked
+
+**Solutions**:
+```bash
+# Install GitHub CLI
+brew install gh  # macOS
+# or: https://github.com/cli/cli#installation
+
+# Install Copilot extension
+gh extension install github/gh-copilot
+
+# Authenticate
+gh auth login
+gh auth refresh
+
+# Verify
+gh auth status
+```
+
+#### Session TTL Expiry
+
+**Symptom**: Session disappears mid-execution
+
+**Cause**: Session exceeded 24h TTL
+
+**Solution**:
+```bash
+# Increase TTL (environment variable)
+export SESSION_TTL_SECONDS=86400  # 24h (default)
+export SESSION_TTL_SECONDS=172800 # 48h
+
+# Restart API server
+docker compose restart copilot-agent
+```
+
+#### Turn Budget Exhausted
+
+**Symptom**: Agent stops mid-execution with "max turns reached"
+
+**Solution**:
+```json
+// Increase max_turns in request
+{
+  "max_turns": 40  // default is 20, max is 50
+}
+```
+
+**Prevention**:
+- Design agents to be turn-efficient
+- Delegate complex sub-tasks to specialized agents
+- Provide clear success criteria
+
+---
+
+## Performance Tuning
+
+### Horizontal Scaling
+
+| Component | Scaling Strategy | Bottleneck |
+|-----------|------------------|------------|
+| API Server | Stateless, scale with LB | LLM API rate limits |
+| Arq Workers | Scale to match queue depth | Redis throughput |
+| Redis | Vertical or sharding | Memory, network I/O |
+
+### Worker Concurrency
+
+```python
+# worker.py — WorkerSettings
+class WorkerSettings:
+    max_jobs = 10  # Concurrent sessions per worker process
+    job_timeout = 600  # 10 min per session
+```
+
+**Tuning Guidelines**:
+- **High throughput**: Increase `max_jobs` (requires more memory)
+- **Long-running workflows**: Increase `job_timeout`
+- **Memory-constrained**: Reduce `max_jobs`, run more worker processes
+
+### Redis Optimization
+
+```bash
+# Increase max memory (Redis config)
+maxmemory 4gb
+maxmemory-policy allkeys-lru
+
+# Enable persistence (optional)
+save 900 1
+save 300 10
+save 60 10000
+
+# Monitor memory usage
+redis-cli INFO memory
+```
+
+---
+
+## Related Documentation
+
+- [Main README](../../../../README.md) — Platform overview
+- [ARCHITECTURE](../../../../ARCHITECTURE.md) — System architecture
+- [Frontend README](../../README.md) — Next.js UI
+- [Atlassian Bridge](../../../../atlassian-bridge/README.md) — Jira/Confluence proxy
+- [ATAF Design](../../docs/ATAF-Design.md) — AutoTest Agent Framework
+
+---
+
+## License
+
+[Add your license here]

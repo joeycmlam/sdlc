@@ -34,29 +34,90 @@ import asyncio
 import os
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
-# Load .env files for Jira credentials, but do NOT let a pre-existing GITHUB_TOKEN
-# interfere with the Copilot CLI's own OAuth credential store.
-# The Copilot CLI only accepts OAuth tokens from gh/Copilot CLI app; a PAT with
-# insufficient scopes causes "Authorization error, you may need to run /login".
+# Auth mode resolution (evaluated once at import time):
+#   PAT mode  — GH_TOKEN or GITHUB_TOKEN is set in the environment.
+#               SubprocessConfig(github_token=...) is passed to CopilotClient.
+#   gh mode   — no PAT present; CopilotClient uses the gh CLI credential store
+#               (~/.config/gh/hosts.yml populated by `gh auth login`).
+#
+# Snapshot the PAT *before* stripping it from the environment so downstream
+# tools (jira_cli, GitHub REST calls) that legitimately need a raw PAT can
+# still read _GITHUB_PAT, while the Copilot CLI subprocess never sees
+# GITHUB_TOKEN in its environment (which would break the OAuth handshake).
 _here = Path(__file__).parent
 load_dotenv(_here / ".env")
 load_dotenv(_here.parent / "jira-cli" / ".env")
 
-# Remove GITHUB_TOKEN / GH_TOKEN so the Copilot CLI uses its keyring credentials.
+_GITHUB_PAT: str | None = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+
+# Strip token env vars so the Copilot CLI subprocess never sees a raw PAT;
+# the SDK's SubprocessConfig.github_token feeds it through a dedicated channel.
 for _env_key in ("GITHUB_TOKEN", "GH_TOKEN", "COPILOT_GITHUB_TOKEN"):
     os.environ.pop(_env_key, None)
+
+
+def _make_copilot_client():
+    """Return a CopilotClient configured for the active auth mode.
+
+    PAT mode:  GH_TOKEN / GITHUB_TOKEN was set → SubprocessConfig(github_token=...)
+    gh mode:   no PAT → default config, CLI uses the gh credential store.
+    """
+    from copilot import CopilotClient, SubprocessConfig
+
+    if _GITHUB_PAT:
+        return CopilotClient(SubprocessConfig(github_token=_GITHUB_PAT))
+    return CopilotClient()
 
 
 MAX_TURNS_DEFAULT = 20
 MAX_TURNS_LIMIT = 50
 SUB_AGENT_MAX_TURNS = 10
 MAX_RECURSION_DEPTH = 2
+
+# Maps frontmatter `tools` tags to the actual tool names registered by AgentRunner.
+# An absent/None `tools` list means "no restriction — all tools available" (backward compat).
+# Mapping a tag to an empty list means that tag grants no active tools (e.g. "read" = context only).
+_TOOL_TAG_MAP: dict[str, list[str]] = {
+    "read": [],                           # receive & analyse context; no active tools
+    "search": ["read_confluence"],
+    "execute": ["bash_exec"],
+    "agent": ["invoke_agent"],
+    "write": ["create_github_issue"],
+}
+
+
+# A checkpoint handler decides whether a write tool may proceed.
+# Returns an object with .is_approved and .comment — typically a
+# checkpoint_gate.Decision, but kept as a structural protocol so the runner
+# stays decoupled from the gate implementation (e.g. in unit tests).
+CheckpointHandler = Callable[[str, dict, str], Awaitable[Any]]
+
+
+# Bash commands that mutate Jira via the project's jira_cli.py wrapper. The
+# regex intentionally matches the long-form flags used by ba.agent.md so the
+# gate fires before any of them runs.
+_JIRA_WRITE_RE = re.compile(
+    r"jira_cli\.py\b[^&;|]*?--(?:update-description|add-comment|transition|create)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def detect_bash_write_group(command: str) -> str | None:
+    """Return a policy group token for known mutating bash commands.
+
+    Used by the gate so the operator can write 'jira:write' in the approval
+    policy instead of having to enumerate every jira_cli.py flag.
+    """
+    if _JIRA_WRITE_RE.search(command or ""):
+        return "jira:write"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +133,10 @@ class AgentConfig:
     max_turns: int
     depth: int = 0
     base_dir: Path = field(default_factory=lambda: _here)
+    # None → all tools available (no restriction, backward compat).
+    # []   → no active tools (agent declared `tools: [read]` etc.).
+    # [..] → only the listed tool names are registered (plus `finish`).
+    allowed_tools: list[str] | None = None
 
 
 @dataclass
@@ -142,6 +207,12 @@ class WorkflowAnalyser:
 class BashTool:
     """Executes shell commands on behalf of the LLM."""
 
+    def __init__(self, checkpoint_handler: CheckpointHandler | None = None) -> None:
+        self._checkpoint_handler = checkpoint_handler
+        # Set transiently by AgentRunner.run() to stream bash command/result
+        # details to the event bus.  None = no-op (default).
+        self.on_bash_result: Callable[[str, str], None] | None = None
+
     _MAX_COMMAND_LEN = 4096
 
     # Blocklist for unambiguously destructive / injection-vector patterns.
@@ -196,6 +267,24 @@ class BashTool:
             return ToolResult(text_result_for_llm=f"[Error: command exceeds {self._MAX_COMMAND_LEN}-character limit]", result_type="failure")
         if self._BLOCKLIST_RE.search(command):
             return ToolResult(text_result_for_llm="[Error: command rejected — matches destructive-pattern blocklist]", result_type="failure")
+
+        # Human-touch gate: pause if this command falls into a policy-protected
+        # write group (e.g. jira:write). The handler returns instantly when not
+        # gated, so the autonomous path is free of overhead.
+        write_group = detect_bash_write_group(command)
+        if write_group and self._checkpoint_handler is not None:
+            decision = await self._checkpoint_handler(
+                write_group,
+                {"command": command},
+                summary=f"Shell write detected ({write_group})",
+            )
+            if not decision.is_approved:
+                reason = decision.comment or "operator rejected the action"
+                return ToolResult(
+                    text_result_for_llm=f"[Rejected by operator: {reason}]",
+                    result_type="failure",
+                )
+
         print(f"\n\033[36m[Tool: bash_exec]\033[0m {command}", flush=True)
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -224,6 +313,9 @@ class BashTool:
                 output += f"\n[exit code: {proc.returncode}]"
             text = output.strip() or "(no output)"
             print(f"\033[33m[Result]\033[0m\n{text}\n", flush=True)
+            if self.on_bash_result is not None:
+                preview = text[:500] if len(text) > 500 else text
+                self.on_bash_result(command, preview)
             return ToolResult(text_result_for_llm=text)
         except Exception as exc:
             return ToolResult(text_result_for_llm=f"[Error: {exc}]", result_type="failure")
@@ -240,9 +332,14 @@ class AgentRunner:
     Creates its own CopilotClient + Session so sub-agents are fully isolated.
     """
 
-    def __init__(self, config: AgentConfig) -> None:
+    def __init__(
+        self,
+        config: AgentConfig,
+        checkpoint_handler: CheckpointHandler | None = None,
+    ) -> None:
         self._config = config
-        self._bash_tool = BashTool()
+        self._checkpoint_handler = checkpoint_handler
+        self._bash_tool = BashTool(checkpoint_handler=checkpoint_handler)
         self._finished: bool = False
 
     _INVOKE_AGENT_SCHEMA = {
@@ -287,6 +384,8 @@ class AgentRunner:
         extra_context: str = "",
         on_chunk: Callable[[str], None] | None = None,
         on_tool: Callable[[str], None] | None = None,
+        on_bash_result: Callable[[str, str], None] | None = None,
+        on_turn: Callable[[int, int], None] | None = None,
     ) -> str:
         from copilot import CopilotClient
         from copilot.session import PermissionHandler
@@ -304,7 +403,10 @@ class AgentRunner:
         skills_dir = cfg.base_dir / "skills"
         skill_directories = [str(path) for path in skills_dir.glob("*/") if path.is_dir()]
 
-        async with CopilotClient() as client:
+        # Wire the bash-result callback so BashTool can stream details to the bus.
+        self._bash_tool.on_bash_result = on_bash_result
+
+        async with _make_copilot_client() as client:
             session = await client.create_session(
                 on_permission_request=PermissionHandler.approve_all,
                 model=cfg.model,
@@ -316,6 +418,8 @@ class AgentRunner:
 
             try:
                 while turn < cfg.max_turns:
+                    if on_turn is not None:
+                        on_turn(turn + 1, cfg.max_turns)
                     state = TurnState()
                     unsubscribe = session.on(self._make_event_handler(state, on_chunk=on_chunk, on_tool=on_tool))
 
@@ -423,7 +527,7 @@ class AgentRunner:
     def _build_tools(self) -> list:
         from copilot.tools import Tool
 
-        return [
+        all_tools = [
             Tool(
                 name="bash_exec",
                 description=BashTool.DESCRIPTION,
@@ -476,6 +580,13 @@ class AgentRunner:
             ),
         ]
 
+        allowed = self._config.allowed_tools
+        if allowed is None:
+            # No restriction declared — return all tools (backward compat).
+            return all_tools
+        # Restrict to declared tools; always include `finish` so the agent can signal completion.
+        return [t for t in all_tools if t.name == "finish" or t.name in allowed]
+
     async def _handle_create_github_issue(self, inv) -> object:
         import httpx
         from copilot.tools import ToolResult
@@ -493,6 +604,26 @@ class AgentRunner:
                 text_result_for_llm="[Error: create_github_issue requires owner, repo, title, prompt]",
                 result_type="failure",
             )
+
+        if self._checkpoint_handler is not None:
+            decision = await self._checkpoint_handler(
+                "create_github_issue",
+                {
+                    "owner": owner,
+                    "repo": repo,
+                    "title": title,
+                    "body_preview": (prompt or "")[:280],
+                    "agent": agent,
+                    "skills": skills,
+                },
+                summary=f"Open issue in {owner}/{repo}: {title}",
+            )
+            if not decision.is_approved:
+                reason = decision.comment or "operator rejected the action"
+                return ToolResult(
+                    text_result_for_llm=f"[Rejected by operator: {reason}]",
+                    result_type="failure",
+                )
 
         # Call our own api_server endpoint, which wraps the GitHub REST API and
         # handles Copilot cloud-agent assignment + GH_TOKEN management server-side.
@@ -595,8 +726,32 @@ class AgentRunner:
             )
 
         agent_path = cfg.base_dir / agent_file
-        sub_prompt = CLI.load_agent_file(str(agent_path))
+        if not agent_path.exists():
+            return ToolResult(
+                text_result_for_llm=(
+                    f"[Error: Agent file '{agent_file}' not found at {agent_path}. "
+                    "Use the relative path including directory prefix, e.g. 'agents/jira-reader.md'.]"
+                ),
+                result_type="failure",
+            )
+        sub_prompt = agent_path.read_text(encoding="utf-8").strip()
         print(f"\n\033[35m[Sub-agent: {agent_file}]\033[0m depth={cfg.depth + 1}", flush=True)
+
+        # Apply the sub-agent's own `tools:` frontmatter restriction so that agents
+        # declared with tools: [read] (or similar) do not inadvertently receive tools
+        # like invoke_agent or bash_exec.
+        import frontmatter as _fm
+        try:
+            _post = _fm.loads(sub_prompt)
+            _tag_list: list[str] | None = _post.metadata.get("tools")
+            if _tag_list is None:
+                sub_allowed_tools = None
+            else:
+                sub_allowed_tools: list[str] = []
+                for _tag in _tag_list:
+                    sub_allowed_tools.extend(_TOOL_TAG_MAP.get(_tag, []))
+        except Exception:
+            sub_allowed_tools = None
 
         sub_config = AgentConfig(
             system_prompt=sub_prompt,
@@ -605,8 +760,11 @@ class AgentRunner:
             max_turns=SUB_AGENT_MAX_TURNS,
             depth=cfg.depth + 1,
             base_dir=cfg.base_dir,
+            allowed_tools=sub_allowed_tools,
         )
-        result = await AgentRunner(sub_config).run(instruction, extra_context=context)
+        result = await AgentRunner(
+            sub_config, checkpoint_handler=self._checkpoint_handler
+        ).run(instruction, extra_context=context, on_bash_result=self._bash_tool.on_bash_result)
         print(f"\033[35m[Sub-agent: {agent_file} complete]\033[0m\n", flush=True)
         return ToolResult(text_result_for_llm=result or "(sub-agent returned no output)")
 

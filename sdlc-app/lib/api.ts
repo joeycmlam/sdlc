@@ -172,6 +172,12 @@ export async function deleteSession(id: string): Promise<void> {
   if (!res.ok && res.status !== 204) throw new Error("Failed to delete session");
 }
 
+export async function cancelSession(id: string): Promise<Session> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+  if (!res.ok) throw new Error("Failed to cancel session");
+  return res.json();
+}
+
 export async function* streamSessionEvents(
   id: string,
   signal?: AbortSignal,

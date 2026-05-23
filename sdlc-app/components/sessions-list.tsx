@@ -14,7 +14,7 @@ const TERMINAL_STATES = new Set<SessionState>(["completed", "failed", "rejected"
 
 export function SessionsList() {
   const [busyId, setBusyId] = useState<string | null>(null);
-  const { data, error, isLoading, mutate } = useSWR(
+  const { data, error, isLoading, isValidating, mutate } = useSWR(
     "sessions",
     () => listSessions(100),
     { refreshInterval: 5000, revalidateOnFocus: true },
@@ -42,14 +42,14 @@ export function SessionsList() {
           </div>
           <button
             onClick={() => mutate()}
-            disabled={isLoading}
+            disabled={isValidating}
             className={cn(
               "flex items-center gap-2 px-3 py-2 rounded-lg",
               "border border-border bg-card hover:bg-secondary",
               "text-sm transition-colors disabled:opacity-50",
             )}
           >
-            <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
+            <RefreshCw className={cn("w-4 h-4", isValidating && "animate-spin")} />
             Refresh
           </button>
         </div>

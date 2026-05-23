@@ -14,6 +14,8 @@ interface SidebarProps {
   isLoading?: boolean;
   maxTurns: number;
   onMaxTurnsChange: (turns: number) => void;
+  timeoutSeconds: number;
+  onTimeoutSecondsChange: (seconds: number) => void;
 }
 
 export function Sidebar({
@@ -23,6 +25,8 @@ export function Sidebar({
   isLoading,
   maxTurns,
   onMaxTurnsChange,
+  timeoutSeconds,
+  onTimeoutSecondsChange,
 }: SidebarProps) {
   const [panelAgent, setPanelAgent] = useState<string | null>(null);
 
@@ -86,6 +90,26 @@ export function Sidebar({
               <span>5</span>
               <span className="font-medium text-foreground">{maxTurns}</span>
               <span>50</span>
+            </div>
+          </div>
+          <div>
+            <label className="text-sm text-muted-foreground block mb-1.5">
+              Timeout (seconds)
+            </label>
+            <input
+              type="range"
+              min="60"
+              max="1800"
+              step="30"
+              value={timeoutSeconds}
+              onChange={(e) => onTimeoutSecondsChange(Number(e.target.value))}
+              disabled={isLoading}
+              className="w-full accent-primary"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+              <span>1m</span>
+              <span className="font-medium text-foreground">{timeoutSeconds}s</span>
+              <span>30m</span>
             </div>
           </div>
         </div>

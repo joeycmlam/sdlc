@@ -54,6 +54,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from redis import asyncio as aioredis
 
 # Snapshot GH_TOKEN BEFORE importing agent_copilot — that module wipes
 # GITHUB_TOKEN/GH_TOKEN from os.environ at import time so the Copilot CLI
@@ -62,29 +63,45 @@ from pydantic import BaseModel, Field
 _GH_TOKEN: Optional[str] = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
 
 from agent_copilot import AgentConfig, AgentRunner, CLI  # noqa: F401, E402
+from checkpoint_gate import DecisionAction, publish_decision
 from event_bus import EventBus
-from registry import AgentRegistry, SkillRegistry
+from registry import AgentRegistry, SkillRegistry, TeamRegistry
 from session_store import RedisSessionStore, SessionState
 
 _here = Path(__file__).parent
-AGENTS_DIR = _here / "agents"
-SKILLS_DIR = _here / "skills"
+# When installed as a wheel (e.g. inside Docker), __file__ resolves to
+# site-packages rather than the runtime working directory.  Re-anchor _here
+# to the parent of AGENTS_DIR so that agent/skill/team lookups work correctly.
+_agents_dir_env = os.getenv("AGENTS_DIR")
+if _agents_dir_env:
+    _here = Path(_agents_dir_env).parent
+
+AGENTS_DIR = Path(os.getenv("AGENTS_DIR", str(_here / "agents")))
+SKILLS_DIR = Path(os.getenv("SKILLS_DIR", str(_here / "skills")))
+TEAMS_DIR = Path(os.getenv("TEAMS_DIR", str(_here / "teams")))
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 agent_registry = AgentRegistry(AGENTS_DIR)
 skill_registry = SkillRegistry(SKILLS_DIR)
+team_registry = TeamRegistry(TEAMS_DIR, agent_registry=agent_registry)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.session_store = RedisSessionStore.from_url(REDIS_URL)
     app.state.event_bus = EventBus.from_url(REDIS_URL)
+    # Dedicated Redis client for pub/sub side-channel writes (approval decisions).
+    app.state.redis = aioredis.from_url(REDIS_URL, decode_responses=True)
     app.state.arq_pool = await create_pool(RedisSettings.from_dsn(REDIS_URL))
     try:
         yield
     finally:
         await app.state.session_store.close()
         await app.state.event_bus.close()
+        try:
+            await app.state.redis.aclose()
+        except AttributeError:
+            await app.state.redis.close()
         try:
             await app.state.arq_pool.aclose()
         except AttributeError:
@@ -126,6 +143,28 @@ class CreateSessionRequest(BaseModel):
     github_owner: Optional[str] = None
     github_repo: Optional[str] = None
     custom_agent: Optional[str] = None
+    # Execution mode and approval policy.
+    # 'autonomous': run every tool without pausing.
+    # 'human_touch': pause before any tool whose name matches a pattern
+    #                in approval_policy; surfaces a checkpoint event the
+    #                operator approves/rejects via /sessions/{id}/approve.
+    # Supported approval_policy entries:
+    #   tool names:    "create_github_issue", "read_confluence", ...
+    #   write groups:  "jira:write" (matches Jira update/comment/transition
+    #                  via bash_exec)
+    execution_mode: Literal["autonomous", "human_touch"] = "autonomous"
+    approval_policy: list[str] = []
+
+    # Per-session timeout override.  0 = use the worker's global
+    # SESSION_RUN_TIMEOUT_SECONDS env var (default 570 s / 9m30s).
+    timeout_seconds: int = 0
+
+    # Team scoping. When set, missing fields above (model, execution_mode,
+    # approval_policy) are filled from the team's manifest, the agent_file
+    # is checked against the team's allowed_agents list, and the team's
+    # jira_project_key / confluence_space_key + Markdown guidance are
+    # prepended to extra_context so the agent inherits team standards.
+    team_id: Optional[str] = None
 
 
 class ApproveRequest(BaseModel):
@@ -273,6 +312,39 @@ async def list_skills():
     }
 
 
+def _team_to_dict(team) -> dict:
+    return {
+        "id": team.id,
+        "name": team.name,
+        "description": team.description,
+        "owner": team.owner,
+        "default_model": team.default_model,
+        "default_execution_mode": team.default_execution_mode,
+        "default_approval_policy": team.default_approval_policy,
+        "allowed_agents": team.allowed_agents,
+        "jira_project_key": team.jira_project_key,
+        "confluence_space_key": team.confluence_space_key,
+        "unknown_allowed_agents": team_registry.unknown_allowed_agents(team.id),
+    }
+
+
+@app.get("/teams")
+async def list_teams():
+    """List all team manifests loaded from teams/*.team.md."""
+    return {"teams": [_team_to_dict(t) for t in team_registry.all().values()]}
+
+
+@app.get("/teams/{team_id}")
+async def get_team(team_id: str):
+    """Full manifest for one team, including the Markdown guidance body."""
+    team = team_registry.get(team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail=f"Team '{team_id}' not found.")
+    payload = _team_to_dict(team)
+    payload["guidance"] = team.guidance
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Available LLM models — sourced from the local Copilot CLI via the SDK's
 # `models.list` JSON-RPC method. Cached in-process so the dropdown stays
@@ -286,9 +358,9 @@ _models_cache_lock = asyncio.Lock()
 
 async def _fetch_models_from_cli() -> list[dict]:
     """Query the Copilot CLI for its current model catalog."""
-    from copilot import CopilotClient  # local import: heavy package
+    from agent_copilot import _make_copilot_client
 
-    async with CopilotClient() as client:
+    async with _make_copilot_client() as client:
         models = await client.list_models()
 
     out: list[dict] = []
@@ -384,23 +456,102 @@ async def list_sessions(request: Request, limit: int = Query(100, ge=1, le=500))
     return {"sessions": [s.model_dump(mode="json") for s in sessions]}
 
 
+def _agent_id_from_file(agent_file: str) -> str:
+    """Derive the agent id (frontmatter `id:`) from a relative agent_file path.
+
+    Falls back to the filename stem when the file has no frontmatter id, so
+    team allow-lists can target either id or filename.
+    """
+    name = Path(agent_file).name
+    stem = name.removesuffix(".agent.md").removesuffix(".md")
+    for record in agent_registry.all().values():
+        # AgentRegistry currently exposes record.id but not its source path,
+        # so resolve by matching id == stem first; otherwise let stem stand.
+        if record.id == stem:
+            return record.id
+    return stem
+
+
 @app.post("/sessions", status_code=201)
 async def create_session(req: CreateSessionRequest, request: Request) -> dict:
-    """Create a new session. Does not start execution — call /sessions/{id}/run."""
+    """Create a new session. Does not start execution — call /sessions/{id}/run.
+
+    When ``team_id`` is set, the team's manifest fills in any unspecified
+    defaults (model, execution_mode, approval_policy) and restricts which
+    agents the session can target.
+    """
     _resolve_agent_path(req.agent_file)
     store: RedisSessionStore = request.app.state.session_store
+
+    # Start from caller-supplied values; team defaults only apply where the
+    # caller didn't explicitly set the field (tracked via pydantic's
+    # model_fields_set so empty-list and "autonomous" defaults stay overridable).
+    explicit = req.model_fields_set
+    model = req.model
+    execution_mode = req.execution_mode
+    approval_policy = list(req.approval_policy)
+    extra_context_prefix_parts: list[str] = []
+
+    if req.team_id:
+        team = team_registry.get(req.team_id)
+        if team is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Team '{req.team_id}' not found in teams/.",
+            )
+
+        agent_id = _agent_id_from_file(req.agent_file)
+        if not team.is_agent_allowed(agent_id):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Agent '{agent_id}' is not in team '{team.id}' allowed_agents. "
+                    f"Allowed: {team.allowed_agents}"
+                ),
+            )
+
+        if "model" not in explicit:
+            model = team.default_model
+        if "execution_mode" not in explicit:
+            execution_mode = team.default_execution_mode
+        if "approval_policy" not in explicit:
+            approval_policy = list(team.default_approval_policy)
+
+        scoping_lines = []
+        if team.jira_project_key:
+            scoping_lines.append(f"Jira project: {team.jira_project_key}")
+        if team.confluence_space_key:
+            scoping_lines.append(f"Confluence space: {team.confluence_space_key}")
+        if scoping_lines:
+            extra_context_prefix_parts.append(
+                f"## Team {team.name} ({team.id})\n" + "\n".join(scoping_lines)
+            )
+        if team.guidance:
+            extra_context_prefix_parts.append(
+                f"## Team standards — {team.name}\n{team.guidance}"
+            )
+
+    extra_context = req.extra_context
+    if extra_context_prefix_parts:
+        prefix = "\n\n".join(extra_context_prefix_parts)
+        extra_context = f"{prefix}\n\n{req.extra_context}" if req.extra_context else prefix
+
     session = await store.create(
         agent_file=req.agent_file,
         instruction=req.instruction,
-        model=req.model,
+        model=model,
         max_turns=req.max_turns,
-        extra_context=req.extra_context,
+        extra_context=extra_context,
         jira_url=req.jira_url,
         confluence_pages=req.confluence_pages,
         create_github_issue=req.create_github_issue,
         github_owner=req.github_owner,
         github_repo=req.github_repo,
         custom_agent=req.custom_agent,
+        execution_mode=execution_mode,
+        approval_policy=approval_policy,
+        team_id=req.team_id,
+        timeout_seconds=req.timeout_seconds,
     )
     return session.model_dump(mode="json")
 
@@ -454,7 +605,19 @@ async def session_events(session_id: str, request: Request):
 
 @app.post("/sessions/{session_id}/approve")
 async def approve_session(session_id: str, req: ApproveRequest, request: Request) -> dict:
-    """Approve or reject a session that is awaiting_approval."""
+    """Approve or reject a session that is awaiting_approval.
+
+    Two flows merge here:
+
+    1. **Checkpointed session** — the worker is blocked inside CheckpointGate
+       waiting on a Redis pub/sub message. We publish the decision; the worker
+       handles FSM state itself (back to running on approve, back to running
+       with a rejection ToolResult on reject) so we must NOT double-transition.
+
+    2. **Plain awaiting_approval** — legacy path used by sessions that paused
+       through some other mechanism. We keep the original FSM behaviour for
+       those.
+    """
     store: RedisSessionStore = request.app.state.session_store
     bus: EventBus = request.app.state.event_bus
     session = await store.get(session_id)
@@ -466,6 +629,27 @@ async def approve_session(session_id: str, req: ApproveRequest, request: Request
             detail=f"Session is in state '{session.state}'; only 'awaiting_approval' can be approved/rejected.",
         )
 
+    # Checkpointed path: worker is alive and listening; just publish the decision.
+    if session.pending_checkpoint is not None:
+        subscribers = await publish_decision(
+            request.app.state.redis,
+            session_id,
+            DecisionAction.APPROVE if req.action == "approve" else DecisionAction.REJECT,
+            comment=req.comment,
+        )
+        if subscribers == 0:
+            # Worker died or the job timed out — fall back to the legacy
+            # transition path so the session doesn't get stuck forever.
+            await store.set_pending_checkpoint(session_id, None)
+        else:
+            refreshed = await store.get(session_id)
+            return (
+                refreshed.model_dump(mode="json")
+                if refreshed
+                else {"session_id": session_id, "state": session.state}
+            )
+
+    # Legacy path: FSM-only transition.
     new_state: SessionState = "approved" if req.action == "approve" else "rejected"
     await store.transition(session_id, new_state)
     await bus.publish(session_id, {"type": "state", "session_id": session_id, "state": new_state})
@@ -495,6 +679,47 @@ async def get_result(session_id: str, request: Request) -> dict:
         "github_issue_url": session.github_issue_url,
         "error": session.error,
     }
+
+
+@app.post("/sessions/{session_id}/cancel")
+async def cancel_session(session_id: str, request: Request) -> dict:
+    """Cancel a running (or pending) session.
+
+    Immediately marks the session as failed with a "Cancelled by user" error
+    and closes the event stream. The underlying arq job will still run until
+    its own timeout, but the UI treats the session as terminal and stops
+    polling.
+    """
+    store: RedisSessionStore = request.app.state.session_store
+    bus: EventBus = request.app.state.event_bus
+    session = await store.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found.")
+
+    cancellable = {"pending", "running", "awaiting_approval", "approved"}
+    if session.state not in cancellable:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Session is already in terminal state '{session.state}'.",
+        )
+
+    error_msg = "Cancelled by user."
+    try:
+        await store.force_fail(session_id, error_msg)
+    except Exception:
+        pass
+
+    await bus.publish(
+        session_id,
+        {"type": "error", "message": error_msg, "code": 499},
+    )
+    try:
+        await bus.end(session_id)
+    except Exception:
+        pass
+
+    refreshed = await store.get(session_id)
+    return refreshed.model_dump(mode="json") if refreshed else {"session_id": session_id, "state": "failed"}
 
 
 # ---------------------------------------------------------------------------

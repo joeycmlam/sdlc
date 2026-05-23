@@ -29,6 +29,7 @@ export function AgentChat() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState("");
   const [maxTurns, setMaxTurns] = useState(20);
+  const [timeoutSeconds, setTimeoutSeconds] = useState(570);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -55,6 +56,7 @@ export function AgentChat() {
           instruction: content,
           model: selectedModel,
           max_turns: maxTurns,
+          timeout_seconds: timeoutSeconds,
         });
         await startSession(session.id);
         router.push(`/sessions/${session.id}`);
@@ -63,7 +65,7 @@ export function AgentChat() {
         setSubmitting(false);
       }
     },
-    [selectedAgent, selectedModel, maxTurns, submitting, router],
+    [selectedAgent, selectedModel, maxTurns, timeoutSeconds, submitting, router],
   );
 
   const chatControls = (
@@ -86,8 +88,8 @@ export function AgentChat() {
             onSelectAgent={setSelectedAgent}
             isLoading={submitting}
             maxTurns={maxTurns}
-            onMaxTurnsChange={setMaxTurns}
-          />
+            onMaxTurnsChange={setMaxTurns}            timeoutSeconds={timeoutSeconds}
+            onTimeoutSecondsChange={setTimeoutSeconds}          />
         </div>
         <main className="flex-1 flex flex-col min-w-0">
           <div className="lg:hidden flex items-center gap-2 px-4 py-2 border-b border-border">
@@ -98,6 +100,8 @@ export function AgentChat() {
               isLoading={submitting}
               maxTurns={maxTurns}
               onMaxTurnsChange={setMaxTurns}
+              timeoutSeconds={timeoutSeconds}
+              onTimeoutSecondsChange={setTimeoutSeconds}
             />
             <span className="text-sm text-muted-foreground">
               {selectedAgent ? `Agent: ${selectedAgent.replace(/\.md$/, "")}` : "Select an agent"}
