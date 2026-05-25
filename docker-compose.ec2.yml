@@ -1,23 +1,22 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# SDLC Platform — docker-compose
+# SDLC Platform — EC2 Docker Compose (pre-built images)
 #
 # Usage:
-#   cp .env.example .env       # fill in secrets
-#   docker compose up --build  # first run
-#   docker compose up -d       # subsequent runs (detached)
+#   ./scripts/deploy.sh          # first run and subsequent deploys
 #
-# Services:
-#   redis            :6379   — session/stream store
-#   atlassian-bridge :8002   — Jira + Confluence proxy
-#   copilot-agent    :8001   — FastAPI + LLM agent runner
-#   arq-worker       (internal) — Arq job worker (same image, different CMD)
-#   frontend         :3000   — Next.js UI
+# Images (build locally, deployed via SSH pipe):
+#   redis:7-alpine               :6379   — pulled directly on EC2
+#   sdlc-atlassian-bridge        :8002   — internal only (no host port)
+#   sdlc-copilot-agent           :8001   — exposed publicly
+#   sdlc-arq-worker              (internal) — job worker
+#   sdlc-frontend                :3000   — exposed publicly
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
 
   redis:
     image: redis:7-alpine
+    platform: linux/amd64
     restart: unless-stopped
     volumes:
       - redis_data:/data
@@ -28,12 +27,13 @@ services:
       retries: 5
 
   atlassian-bridge:
-    build:
-      context: ./atlassian-bridge
+    image: sdlc-atlassian-bridge
+    platform: linux/amd64
     restart: unless-stopped
     env_file: .env
-    ports:
-      - "8002:8002"
+    # No host port binding — accessible only within the Docker network
+    expose:
+      - "8002"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 10s
@@ -42,9 +42,8 @@ services:
       start_period: 10s
 
   copilot-agent:
-    build:
-      context: ./sdlc-app/services
-      dockerfile: copilot-agent/Dockerfile
+    image: sdlc-copilot-agent
+    platform: linux/amd64
     restart: unless-stopped
     env_file: .env
     environment:
@@ -53,12 +52,6 @@ services:
       AGENTS_DIR: /app/agents
       SKILLS_DIR: /app/skills
       TEAMS_DIR: /app/teams
-    # Auth mode is selected automatically at runtime:
-    #   PAT mode: set GH_TOKEN in .env  → SubprocessConfig(github_token=...)
-    #   gh  mode: comment out GH_TOKEN and uncomment the volume below
-    #             (requires `gh auth login` on the host first)
-    # volumes:
-    #   - ~/.config/gh:/home/appuser/.config/gh:ro
     ports:
       - "8001:8001"
     depends_on:
@@ -72,9 +65,8 @@ services:
       start_period: 20s
 
   arq-worker:
-    build:
-      context: ./sdlc-app/services
-      dockerfile: copilot-agent/Dockerfile
+    image: sdlc-arq-worker
+    platform: linux/amd64
     command: ["agent-worker"]
     restart: unless-stopped
     env_file: .env
@@ -84,9 +76,6 @@ services:
       AGENTS_DIR: /app/agents
       SKILLS_DIR: /app/skills
       TEAMS_DIR: /app/teams
-    # Auth mode mirrors copilot-agent above.
-    # volumes:
-    #   - ~/.config/gh:/home/appuser/.config/gh:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -94,12 +83,8 @@ services:
         condition: service_healthy
 
   frontend:
-    build:
-      context: ./sdlc-app
-      args:
-        # Baked into the Next.js bundle at build time; also read at runtime
-        # by server-side API routes that proxy to the backend.
-        NEXT_PUBLIC_API_URL: http://copilot-agent:8001
+    image: sdlc-frontend
+    platform: linux/amd64
     restart: unless-stopped
     env_file: .env
     environment:

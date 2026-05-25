@@ -72,6 +72,8 @@ export interface Session {
   instruction: string;
   model: string;
   max_turns: number;
+  /** 0 = use server default (SESSION_RUN_TIMEOUT_SECONDS) */
+  timeout_seconds: number;
   extra_context: string;
   created_at: string;
   updated_at: string;
@@ -95,6 +97,8 @@ export interface CreateSessionParams {
   instruction: string;
   model: string;
   max_turns: number;
+  /** 0 = use server default */
+  timeout_seconds?: number;
   extra_context?: string;
   jira_url?: string;
   confluence_pages?: string[];
@@ -105,10 +109,18 @@ export interface CreateSessionParams {
 }
 
 export interface SessionEvent {
-  type: "state" | "chunk" | "tool" | "done" | "error";
+  type: "state" | "chunk" | "tool" | "bash_result" | "turn" | "done" | "error";
   state?: SessionState;
   content?: string;
   name?: string;
+  /** bash_result: the shell command that was run */
+  command?: string;
+  /** bash_result: truncated stdout/stderr output */
+  result?: string;
+  /** turn: current turn number (1-based) */
+  n?: number;
+  /** turn: configured max_turns for this session */
+  max_turns?: number;
   message?: string;
   code?: number;
   session_id?: string;

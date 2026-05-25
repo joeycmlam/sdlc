@@ -35,13 +35,15 @@ SessionState = Literal[
     "failed",
 ]
 
+ExecutionMode = Literal["autonomous", "human_touch"]
+
 # Valid FSM transitions
 _TRANSITIONS: dict[SessionState, set[SessionState]] = {
     "pending": {"running", "failed"},
     "running": {"awaiting_approval", "completed", "failed"},
     "awaiting_approval": {"approved", "rejected", "failed"},
     "approved": {"running", "completed"},
-    "rejected": {"completed"},
+    "rejected": {"running", "completed"},
     "completed": set(),
     "failed": set(),
 }
@@ -66,6 +68,23 @@ class Session(BaseModel):
     github_repo: str | None = None
     custom_agent: str | None = None
     error: str | None = None
+
+    # Per-session run timeout in seconds.  0 = use the worker's global
+    # SESSION_RUN_TIMEOUT_SECONDS env var (default 570 s / 9m30s).
+    timeout_seconds: int = 0
+
+    # Execution mode and approval policy.
+    # autonomous : run all tools without pausing.
+    # human_touch: pause before any tool whose name matches a pattern in
+    #              approval_policy, surfacing a checkpoint for /approve|/reject.
+    execution_mode: ExecutionMode = "autonomous"
+    approval_policy: list[str] = Field(default_factory=list)
+    pending_checkpoint: dict | None = None
+
+    # Team scoping. None = ad-hoc / no team. When set, this session was
+    # created under the named team manifest (teams/<team_id>.team.md) and
+    # inherited any defaults the caller didn't override.
+    team_id: str | None = None
 
     def transition(self, new_state: SessionState) -> None:
         allowed = _TRANSITIONS.get(self.state, set())
@@ -135,6 +154,10 @@ class RedisSessionStore:
         github_owner: str | None = None,
         github_repo: str | None = None,
         custom_agent: str | None = None,
+        execution_mode: ExecutionMode = "autonomous",
+        approval_policy: list[str] | None = None,
+        team_id: str | None = None,
+        timeout_seconds: int = 0,
     ) -> Session:
         session = Session(
             id=str(uuid.uuid4()),
@@ -149,7 +172,20 @@ class RedisSessionStore:
             github_owner=github_owner,
             github_repo=github_repo,
             custom_agent=custom_agent,
+            execution_mode=execution_mode,
+            approval_policy=approval_policy or [],
+            team_id=team_id,
+            timeout_seconds=timeout_seconds,
         )
+        await self._save(session)
+        return session
+
+    async def set_pending_checkpoint(
+        self, session_id: str, checkpoint: dict | None
+    ) -> Session:
+        session = await self._get_or_raise(session_id)
+        session.pending_checkpoint = checkpoint
+        session.updated_at = datetime.now(timezone.utc)
         await self._save(session)
         return session
 
@@ -202,6 +238,20 @@ class RedisSessionStore:
 
     async def set_error(self, session_id: str, error: str) -> Session:
         session = await self._get_or_raise(session_id)
+        session.error = error
+        session.updated_at = datetime.now(timezone.utc)
+        await self._save(session)
+        return session
+
+    async def force_fail(self, session_id: str, error: str) -> Session:
+        """Force a session into the failed state regardless of its current state.
+
+        Bypasses FSM validation — use only for cancellation / emergency stops
+        where the normal transition path is unavailable (e.g. the session is
+        still running in the worker and we need the UI to reflect failure now).
+        """
+        session = await self._get_or_raise(session_id)
+        session.state = "failed"
         session.error = error
         session.updated_at = datetime.now(timezone.utc)
         await self._save(session)

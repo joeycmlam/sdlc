@@ -12,6 +12,8 @@ interface MobileSidebarProps {
   isLoading?: boolean;
   maxTurns: number;
   onMaxTurnsChange: (turns: number) => void;
+  timeoutSeconds: number;
+  onTimeoutSecondsChange: (seconds: number) => void;
 }
 
 export function MobileSidebar({
@@ -21,6 +23,8 @@ export function MobileSidebar({
   isLoading,
   maxTurns,
   onMaxTurnsChange,
+  timeoutSeconds,
+  onTimeoutSecondsChange,
 }: MobileSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -65,6 +69,8 @@ export function MobileSidebar({
             isLoading={isLoading}
             maxTurns={maxTurns}
             onMaxTurnsChange={onMaxTurnsChange}
+            timeoutSeconds={timeoutSeconds}
+            onTimeoutSecondsChange={onTimeoutSecondsChange}
           />
         </div>
       </div>

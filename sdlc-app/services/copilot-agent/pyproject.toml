@@ -28,7 +28,7 @@ agent-api = "api_server:cli_main"
 agent-worker = "worker:cli_main"
 
 [tool.setuptools]
-py-modules = ["agent", "agent_copilot", "api_server", "registry", "session_store", "event_bus", "worker"]
+py-modules = ["agent", "agent_copilot", "api_server", "registry", "session_store", "event_bus", "checkpoint_gate", "worker"]
 include-package-data = true
 
 [tool.setuptools.data-files]

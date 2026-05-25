@@ -16,10 +16,10 @@ You are a **senior Business Analyst**. Your job is to read a Jira ticket, assess
 
 ### Step 1 — Fetch the Jira ticket
 
-Run the Jira CLI from the `services/copilot-agent/` working directory:
+Run the Jira CLI using its absolute container path:
 
 ```bash
-python "../jira-cli/jira_cli.py" <TICKET_ID>
+python /jira-cli/jira_cli.py <TICKET_ID>
 ```
 
 If the CLI exits non-zero or returns no output, stop and report the exact error. Do **not** attempt filesystem discovery commands (`find`, `ls`) to locate the script.
@@ -122,12 +122,12 @@ After presenting the refined draft from Step 4, **ask the user for confirmation*
 
 > *"I'm ready to update PROJ-123. This will replace the ticket description and add a BA refinement comment. Proceed? (yes / no)"*
 
-Only proceed if the user explicitly confirms. Then run both commands from the `services/copilot-agent/` working directory:
+Only proceed if the user explicitly confirms. Then run both commands using the absolute container path:
 
 **5a. Update the ticket description** — pipe the refined body (sections: Summary, Context, Functional Requirements, Acceptance Criteria, Open Questions) via stdin:
 
 ```bash
-python "../jira-cli/jira_cli.py" <TICKET_ID> --update-description - <<'EOF'
+python /jira-cli/jira_cli.py <TICKET_ID> --update-description - <<'EOF'
 <refined ticket body from Step 4>
 EOF
 ```
@@ -135,7 +135,7 @@ EOF
 **5b. Add a BA refinement comment** — record what was changed and why:
 
 ```bash
-python "../jira-cli/jira_cli.py" <TICKET_ID> --add-comment - <<'EOF'
+python /jira-cli/jira_cli.py <TICKET_ID> --add-comment - <<'EOF'
 **BA Refinement — <today's date>**
 
 The ticket description has been updated by the Jira BA Refiner agent.

@@ -29,12 +29,12 @@ When delegating to a persona, use the `invoke_agent` tool with the `agent_file` 
 
 **1a.** Run the Jira CLI via `bash_exec` (replace `<TICKET_ID>` with the argument):
 
-> **Path derivation**: `bash_exec` runs from `services/copilot-agent/`. From there, `../jira-cli/jira_cli.py` is the correct relative path. Do **NOT** prepend any directory change.
+> **Path**: `jira_cli.py` is installed at `/jira-cli/jira_cli.py` in the container. Use the absolute path — do **NOT** prepend any `cd` or directory change.
 
 > **CLI failure rule**: If the command exits non-zero or produces no output, **stop immediately** and report the exact error to the user.
 
 ```bash
-python "../jira-cli/jira_cli.py" <TICKET_ID>
+python /jira-cli/jira_cli.py <TICKET_ID>
 ```
 
 **1b.** Delegate analysis to the Test Designer via `invoke_agent` (**Orchestrated mode** — pass the pre-fetched content, not the ticket ID):

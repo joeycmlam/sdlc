@@ -16,21 +16,9 @@ Fetch a Jira issue — description, metadata, comments, and attachments — and 
 - User wants to understand requirements, status, or comments from a Jira card
 - User wants to analyze a ticket (generate tests, draft PR description, extract acceptance criteria)
 
-## First-Time Setup
+## Runtime Environment
 
-Run these commands from the repo root — creates the venv and installs dependencies:
-
-```bash
-cd services/jira-cli && python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
-```
-
-Then fill in credentials in `services/jira-cli/.env`:
-
-| Variable | Value |
-|---|---|
-| `JIRA_URL` | e.g. `https://yourorg.atlassian.net` |
-| `JIRA_USER` | your Jira account email |
-| `JIRA_API_TOKEN` | create at [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens) |
+Inside the Docker container, `jira_cli.py` is pre-installed at `/jira-cli/jira_cli.py` and all required credentials are injected as environment variables (`JIRA_URL`, `JIRA_USER`, `JIRA_API_TOKEN`). No venv activation or `.env` setup is needed.
 
 ## Procedure
 
@@ -43,20 +31,19 @@ If none provided, ask: *"Which Jira issue key would you like me to fetch?"*
 **A) Read and display only** — fetch and show the structured Markdown:
 
 ```bash
-cd services/jira-cli && source .venv/bin/activate
-python jira_cli.py PROJECT-123
+python /jira-cli/jira_cli.py PROJECT-123
 ```
 
 **B) Read and analyze with AI** — pipe into copilot-agent for AI analysis:
 
 ```bash
-services/jira-cli/.venv/bin/python services/jira-cli/jira_cli.py PROJECT-123 | python services/copilot-agent/agent.py -a services/copilot-agent/agents/jira-reader.md -m gpt-4o
+python /jira-cli/jira_cli.py PROJECT-123 | python /app/agent.py -a /app/agents/jira-reader.md -m gpt-4o
 ```
 
 **C) Interactive AI analysis** — fetch first, then start a conversation:
 
 ```bash
-services/jira-cli/.venv/bin/python services/jira-cli/jira_cli.py PROJECT-123 | python services/copilot-agent/agent.py -a services/copilot-agent/agents/jira-reader.md -m gpt-4o --interactive
+python /jira-cli/jira_cli.py PROJECT-123 | python /app/agent.py -a /app/agents/jira-reader.md -m gpt-4o --interactive
 ```
 
 ### Step 3 — Command options
@@ -100,7 +87,7 @@ Any Python script in this monorepo can use `jira_cli.py` via subprocess or stdin
 ```python
 import subprocess
 result = subprocess.run(
-    ["python", "services/jira-cli/jira_cli.py", "PROJECT-123", "--no-attachments"],
+    ["python", "/jira-cli/jira_cli.py", "PROJECT-123", "--no-attachments"],
     capture_output=True, text=True
 )
 jira_markdown = result.stdout
@@ -110,8 +97,8 @@ jira_markdown = result.stdout
 
 | Error | Fix |
 |---|---|
-| `Missing required environment variable(s)` | Fill in `services/jira-cli/.env` — see First-Time Setup |
+| `Missing required environment variable(s)` | Ensure `JIRA_URL`, `JIRA_USER`, `JIRA_API_TOKEN` are set in container env |
 | `Error connecting to Jira` | Check `JIRA_URL` format and network access |
-| `ModuleNotFoundError` | Run `bash services/copilot-agent/skills/read-jira/setup.sh` |
+| `ModuleNotFoundError` | Rebuild the Docker image — dependencies must be in `/jira-cli/` |
 | `JIRAError: Issue does not exist` | Verify issue key and account permissions |
 | PDF/DOCX not extracted | `pip install pdfminer.six python-docx openpyxl` in the venv |
