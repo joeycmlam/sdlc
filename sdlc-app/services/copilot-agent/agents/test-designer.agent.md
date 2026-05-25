@@ -32,12 +32,12 @@ This agent operates in one of two modes depending on how it is called:
 
 Run the Jira CLI via `bash_exec` (replace `<TICKET_ID>` with the argument):
 
-> **Path derivation**: `bash_exec` runs from `services/copilot-agent/`. From there, `../jira-cli/jira_cli.py` is the correct relative path. Do **NOT** prepend any directory change.
+> **Path**: `jira_cli.py` is installed at `/jira-cli/jira_cli.py` in the container. Use the absolute path — do **NOT** prepend any `cd` or directory change.
 
 > **CLI failure rule**: If the command exits non-zero or produces no output, **stop immediately** and report the exact error to the user. Do **NOT** attempt to locate the script via `find`, `ls`, or any filesystem discovery command.
 
 ```bash
-python "../jira-cli/jira_cli.py" <TICKET_ID>
+python /jira-cli/jira_cli.py <TICKET_ID>
 ```
 
 The CLI output contains all relevant fields: summary, description, issue type, priority, status, assignee, reporter, labels, components, fix version, linked issues, attachments, and all comments in chronological order.

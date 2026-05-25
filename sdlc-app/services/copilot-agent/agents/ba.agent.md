@@ -62,12 +62,12 @@ Score: **X / 6 fields present**. Based on the score, determine the enrichment mo
 
 **1a.** Run the Jira CLI via `bash_exec` (replace `<TICKET_ID>` with the argument).
 
-> **Path derivation**: `agent_copilot.py` (and therefore `bash_exec`) always runs from the `services/copilot-agent/` directory. From there, `../jira-cli/jira_cli.py` is the correct relative path. Do **NOT** prepend `cd /workspace`, `cd ~`, or any other directory change — the relative path already works without any `cd`.
+> **Path**: `jira_cli.py` is installed at `/jira-cli/jira_cli.py` in the container. Use the absolute path — do **NOT** prepend any `cd` or directory change.
 
 > **CLI failure rule**: If the command exits non-zero or produces no output, **stop immediately**. Report the exact error to the user. Do **NOT** attempt to locate `jira_cli.py` via `find`, `ls`, or any filesystem discovery command — this is prohibited (see Constraints).
 
 ```bash
-python "../jira-cli/jira_cli.py" <TICKET_ID>
+python /jira-cli/jira_cli.py <TICKET_ID>
 ```
 
 **1b.** Delegate analysis to the Jira Reader sub-agent via `invoke_agent`:
@@ -186,12 +186,12 @@ List every ambiguity, missing piece, or assumption that requires business confir
 
 > **DEFAULT — always perform this step** unless the user explicitly says "do not update Jira" or "preview only". If the CLI fails, output the full enriched text for manual copy-paste and say so clearly.
 
-Write the complete requirements back to the Jira ticket using the write commands below. All commands use the same path derivation as Step 1a: `bash_exec` runs from `services/copilot-agent/`; `jira_cli.py` is at `../jira-cli/jira_cli.py`.
+Write the complete requirements back to the Jira ticket using the write commands below. All commands use `/jira-cli/jira_cli.py` (absolute container path).
 
 **5a. Update the description** — replace the ticket description with the full BRD drafted in Step 3. Pass the text via stdin using `-`:
 
 ```bash
-python "../jira-cli/jira_cli.py" <TICKET_ID> --update-description - <<'ENDDESC'
+python /jira-cli/jira_cli.py <TICKET_ID> --update-description - <<'ENDDESC'
 <full BRD text from Step 3>
 ENDDESC
 ```
@@ -199,7 +199,7 @@ ENDDESC
 **5b. Add a summary comment** — post a comment listing the open questions from Step 4:
 
 ```bash
-python "../jira-cli/jira_cli.py" <TICKET_ID> --add-comment - <<'ENDCMT'
+python /jira-cli/jira_cli.py <TICKET_ID> --add-comment - <<'ENDCMT'
 **BA Analysis Complete**
 
 Business requirements have been drafted and added to the ticket description.
@@ -218,13 +218,13 @@ Both commands print a confirmation to stderr on success and exit non-zero on fai
 First list available transitions:
 
 ```bash
-python "../jira-cli/jira_cli.py" <TICKET_ID> --list-transitions
+python /jira-cli/jira_cli.py <TICKET_ID> --list-transitions
 ```
 
 Then move to the appropriate status (e.g. `In Review`, `Ready for Dev`):
 
 ```bash
-python "../jira-cli/jira_cli.py" <TICKET_ID> --transition "In Review"
+python /jira-cli/jira_cli.py <TICKET_ID> --transition "In Review"
 ```
 
 Only perform this step when the user explicitly requests a status change.
