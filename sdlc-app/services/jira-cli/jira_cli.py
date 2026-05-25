@@ -510,7 +510,10 @@ def main() -> None:
         load_dotenv(env_path, override=True)
 
     jira = get_jira_client()
-    issue_key = args.issue_key.upper()
+    # Accept full Jira URLs (e.g. https://org.atlassian.net/browse/PROJ-123) or bare keys
+    import re as _re
+    _m = _re.search(r"/browse/([A-Za-z]+-\d+)", args.issue_key)
+    issue_key = (_m.group(1) if _m else args.issue_key).upper()
 
     # ── Write operations (mutually exclusive of the read/output flow) ────────
     write_requested = (

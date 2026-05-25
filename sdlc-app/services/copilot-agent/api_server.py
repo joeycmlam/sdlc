@@ -287,7 +287,16 @@ async def list_agents():
          "skills": a.skills, "tools": a.tools}
         for a in agent_registry.all().values()
     ]
-    all_files = sorted(p.name for p in AGENTS_DIR.glob("*.md")) if AGENTS_DIR.exists() else []
+    all_files: list[str] = []
+    if AGENTS_DIR.exists():
+        for p in sorted(AGENTS_DIR.glob("*.md")):
+            try:
+                post = frontmatter.load(str(p))
+                if post.metadata.get("user-invocable", True) is False:
+                    continue
+            except Exception:
+                pass
+            all_files.append(p.name)
     return {"agents": registered, "files": all_files}
 
 
