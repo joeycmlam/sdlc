@@ -48,7 +48,7 @@ export function ServiceAgentPicker({
   showUpload = true,
 }: ServiceAgentPickerProps) {
   const { data, error, isLoading, mutate } = useSWR(
-    "service-agents",
+    "agents",
     fetchAgents,
     { revalidateOnFocus: false },
   );

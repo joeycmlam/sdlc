@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Github, MessageSquare, ListTree, Bug, Settings } from "lucide-react";
+import { Github, MessageSquare, ListTree, Bug, Settings, LogOut } from "lucide-react";
 import useSWR from "swr";
+import { useSession, signOut } from "next-auth/react";
 
 import { checkHealth } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,7 @@ interface AppShellProps {
 }
 
 export function AppShell({ active, children, rightSlot }: AppShellProps) {
+  const { data: session } = useSession();
   const { data: healthData, error: healthError } = useSWR(
     "health",
     checkHealth,
@@ -79,6 +81,36 @@ export function AppShell({ active, children, rightSlot }: AppShellProps) {
             <StatusIndicator status={status} />
           </div>
           {rightSlot}
+          {session?.user && (
+            <div className="flex items-center gap-2">
+              {session.user.image ? (
+                <img
+                  src={session.user.image}
+                  alt={session.user.name ?? "User"}
+                  className="w-7 h-7 rounded-full border border-border"
+                  title={session.user.email ?? session.user.name ?? ""}
+                />
+              ) : (
+                <div
+                  className="w-7 h-7 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-medium"
+                  title={session.user.email ?? ""}
+                >
+                  {(session.user.name ?? session.user.email ?? "?")[0].toUpperCase()}
+                </div>
+              )}
+              <button
+                onClick={() => signOut({ callbackUrl: "/auth/signin" })}
+                title="Sign out"
+                className={cn(
+                  "flex items-center justify-center w-8 h-8 rounded-lg",
+                  "border border-border bg-card hover:bg-secondary",
+                  "transition-colors"
+                )}
+              >
+                <LogOut className="w-3.5 h-3.5 text-muted-foreground" />
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
