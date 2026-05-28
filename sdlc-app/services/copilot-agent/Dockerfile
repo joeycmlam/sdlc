@@ -56,6 +56,12 @@ COPY copilot-agent/teams/ ./teams/
 # ../jira-cli/jira_cli.py resolves to /jira-cli/jira_cli.py
 COPY jira-cli/jira_cli.py /jira-cli/jira_cli.py
 
+# Make agent/skill/team directories writable so appuser can save edits
+# and create the versions archive directory at build time.
+RUN chown -R appuser:appuser /app/agents /app/skills /app/teams && \
+    mkdir -p /app/agents/versions && \
+    chown appuser:appuser /app/agents/versions
+
 # Drop privileges
 USER appuser
 

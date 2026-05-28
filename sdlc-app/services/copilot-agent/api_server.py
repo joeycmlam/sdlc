@@ -167,6 +167,18 @@ class CreateSessionRequest(BaseModel):
     team_id: Optional[str] = None
 
 
+class UpdateAgentRequest(BaseModel):
+    file: str
+    content: str
+    metadata: Optional[dict] = None
+
+
+class UploadAgentRequest(BaseModel):
+    filename: str
+    content: str
+    overwrite: bool = False
+
+
 class ApproveRequest(BaseModel):
     action: Literal["approve", "reject"]
     comment: str = ""
@@ -256,6 +268,26 @@ def _resolve_agent_path(agent_file: str) -> Path:
     return resolved
 
 
+def _versions_dir() -> Path:
+    return AGENTS_DIR / "versions"
+
+
+def _list_version_numbers(filename: str) -> list[int]:
+    """Return sorted list of archived version numbers for *filename*."""
+    vdir = _versions_dir()
+    if not vdir.exists():
+        return []
+    prefix = filename + ".v"
+    nums: list[int] = []
+    for p in vdir.iterdir():
+        if p.name.startswith(prefix):
+            try:
+                nums.append(int(p.name[len(prefix):]))
+            except ValueError:
+                pass
+    return sorted(nums)
+
+
 def _build_runner(req: RunRequest) -> AgentRunner:
     agent_path = _resolve_agent_path(req.agent_file)
     system_prompt = agent_path.read_text(encoding="utf-8").strip()
@@ -303,12 +335,81 @@ async def list_agents():
 @app.get("/agents/content")
 async def agent_content(file: str = Query(..., description="Agent filename, e.g. ba.agent.md")):
     path = _resolve_agent_path(f"agents/{file}")
+    version = len(_list_version_numbers(file)) + 1
     try:
         post = frontmatter.load(str(path))
-        return {"file": file, "content": post.content, "metadata": dict(post.metadata)}
+        return {"file": file, "content": post.content, "metadata": dict(post.metadata), "version": version}
     except Exception:
         raw = path.read_text(encoding="utf-8")
-        return {"file": file, "content": raw, "metadata": {}}
+        return {"file": file, "content": raw, "metadata": {}, "version": version}
+
+
+@app.put("/agents/content")
+async def update_agent_content(req: UpdateAgentRequest):
+    """Update a service agent file, archiving the previous content as a versioned backup."""
+    import shutil
+
+    safe_file = Path(req.file).name
+    if not (safe_file.endswith(".agent.md") or safe_file.endswith(".md")):
+        raise HTTPException(status_code=400, detail="File must end in .agent.md or .md")
+
+    path = AGENTS_DIR / safe_file
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Agent '{safe_file}' not found.")
+
+    vdir = _versions_dir()
+    vdir.mkdir(exist_ok=True)
+
+    existing_nums = _list_version_numbers(safe_file)
+    next_v = max(existing_nums, default=0) + 1
+    shutil.copy2(str(path), str(vdir / f"{safe_file}.v{next_v}"))
+
+    # Preserve existing frontmatter unless the caller supplies new metadata.
+    if req.metadata is not None:
+        post = frontmatter.Post(req.content, **req.metadata)
+        new_text = frontmatter.dumps(post)
+    else:
+        try:
+            existing = frontmatter.load(str(path))
+            if dict(existing.metadata):
+                post = frontmatter.Post(req.content, **dict(existing.metadata))
+                new_text = frontmatter.dumps(post)
+            else:
+                new_text = req.content
+        except Exception:
+            new_text = req.content
+
+    path.write_text(new_text, encoding="utf-8")
+    agent_registry.reload()
+
+    return {
+        "file": safe_file,
+        "version": next_v + 1,
+        "archived_as": f"versions/{safe_file}.v{next_v}",
+    }
+
+
+@app.post("/agents/upload", status_code=201)
+async def upload_agent(req: UploadAgentRequest):
+    """Upload a new agent file to the agents directory."""
+    safe_file = Path(req.filename).name
+    if not (safe_file.endswith(".agent.md") or safe_file.endswith(".md")):
+        raise HTTPException(status_code=400, detail="Filename must end in .agent.md or .md")
+    if safe_file.lower() in {"readme.md", "index.md"}:
+        raise HTTPException(status_code=400, detail="Cannot upload readme.md or index.md")
+
+    path = AGENTS_DIR / safe_file
+    if path.exists() and not req.overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Agent '{safe_file}' already exists. Set overwrite=true to replace.",
+        )
+
+    AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(req.content, encoding="utf-8")
+    agent_registry.reload()
+
+    return {"file": safe_file, "created": True}
 
 
 @app.get("/skills")

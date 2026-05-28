@@ -7,9 +7,13 @@ import {
   HardDrive,
   Loader2,
   RefreshCw,
+  Upload,
+  X,
+  CheckCircle2,
 } from "lucide-react";
+import { useState, useRef } from "react";
 
-import { fetchAgents, getAgentDisplayName } from "@/lib/api";
+import { fetchAgents, getAgentDisplayName, uploadAgent } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { RegisteredAgent } from "@/lib/types";
 
@@ -27,6 +31,8 @@ interface ServiceAgentPickerProps {
   onChange: (agent: ServiceAgentChoice | null) => void;
   onViewContext?: (agent: ServiceAgentChoice) => void;
   disabled?: boolean;
+  /** When true, shows the upload-new-agent button. Defaults to true. */
+  showUpload?: boolean;
 }
 
 /**
@@ -39,6 +45,7 @@ export function ServiceAgentPicker({
   onChange,
   onViewContext,
   disabled,
+  showUpload = true,
 }: ServiceAgentPickerProps) {
   const { data, error, isLoading, mutate } = useSWR(
     "service-agents",
@@ -48,6 +55,44 @@ export function ServiceAgentPicker({
 
   const choices = buildChoices(data?.files ?? [], data?.agents ?? []);
   const selected = choices.find((a) => a.file === value) ?? null;
+
+  const [showUploadForm, setShowUploadForm] = useState(false);
+  const [uploadFilename, setUploadFilename] = useState("");
+  const [uploadContent, setUploadContent] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleUpload(e: React.FormEvent) {
+    e.preventDefault();
+    if (!uploadFilename.trim() || !uploadContent.trim()) return;
+    setUploading(true);
+    setUploadError(null);
+    setUploadSuccess(null);
+    try {
+      const res = await uploadAgent({ filename: uploadFilename.trim(), content: uploadContent });
+      setUploadSuccess(res.file);
+      setUploadFilename("");
+      setUploadContent("");
+      setShowUploadForm(false);
+      await mutate();
+    } catch (err) {
+      setUploadError((err as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handleFileRead(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!uploadFilename) setUploadFilename(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => setUploadContent(ev.target?.result as string ?? "");
+    reader.readAsText(file);
+    e.target.value = "";
+  }
 
   return (
     <div className="space-y-2">
@@ -101,7 +146,95 @@ export function ServiceAgentPicker({
         >
           <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
         </button>
+        {showUpload && (
+          <button
+            type="button"
+            onClick={() => { setShowUploadForm((v) => !v); setUploadError(null); setUploadSuccess(null); }}
+            disabled={disabled}
+            title="Upload a new agent"
+            className={cn(
+              "flex items-center justify-center w-9 h-9 rounded-md",
+              "border border-border bg-card hover:bg-secondary",
+              "disabled:opacity-50",
+              showUploadForm && "border-primary text-primary",
+            )}
+          >
+            {showUploadForm ? <X className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
+          </button>
+        )}
       </div>
+
+      {showUploadForm && (
+        <form onSubmit={handleUpload} className="rounded-md border border-border bg-card/50 p-3 space-y-2">
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Upload new agent</div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={uploadFilename}
+              onChange={(e) => setUploadFilename(e.target.value)}
+              placeholder="my-agent.agent.md"
+              required
+              className={cn(
+                "flex-1 px-2 py-1.5 rounded-md border border-border bg-background text-sm font-mono",
+                "focus:outline-none focus:ring-1 focus:ring-primary",
+              )}
+            />
+            <label
+              title="Load content from a local file"
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs cursor-pointer",
+                "border border-border bg-card hover:bg-secondary text-muted-foreground",
+              )}
+            >
+              <Upload className="w-3.5 h-3.5" />
+              File
+              <input ref={fileInputRef} type="file" accept=".md" className="hidden" onChange={handleFileRead} />
+            </label>
+          </div>
+          <textarea
+            value={uploadContent}
+            onChange={(e) => setUploadContent(e.target.value)}
+            placeholder={"---\nid: my-agent\nname: My Agent\ndescription: What this agent does\n---\n\nSystem prompt here..."}
+            rows={6}
+            required
+            className={cn(
+              "w-full px-2 py-1.5 rounded-md border border-border bg-background text-xs font-mono resize-y",
+              "focus:outline-none focus:ring-1 focus:ring-primary",
+            )}
+          />
+          {uploadError && (
+            <div className="text-xs text-rose-300">{uploadError}</div>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={uploading || !uploadFilename.trim() || !uploadContent.trim()}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs",
+                "bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50",
+              )}
+            >
+              {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+              Upload
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowUploadForm(false)}
+              disabled={uploading}
+              className="px-3 py-1.5 rounded-md text-xs border border-border bg-card hover:bg-secondary"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {uploadSuccess && !showUploadForm && (
+        <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+          Agent <code className="font-mono">{uploadSuccess}</code> uploaded successfully.
+        </div>
+      )}
 
       {isLoading && !data && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
