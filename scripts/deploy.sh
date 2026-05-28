@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-EC2_HOST="ec2-35-93-195-181.us-west-2.compute.amazonaws.com"
+EC2_HOST="ec2-35-89-228-36.us-west-2.compute.amazonaws.com"
 EC2_USER="ec2-user"
 EC2_KEY="$HOME/.ssh/mysys-m5pro-aws.pem"
 SSH=(ssh -i "$EC2_KEY")
@@ -78,7 +78,7 @@ echo "==> Copying docker-compose.ec2.yml to EC2..."
 # ── Start stack ───────────────────────────────────────────────────────────────
 echo ""
 echo "==> Starting services..."
-"${SSH[@]}" "${EC2_USER}@${EC2_HOST}" "cd ~ && docker compose --env-file .env up -d --remove-orphans"
+"${SSH[@]}" "${EC2_USER}@${EC2_HOST}" "cd ~ && docker compose --env-file .env up -d --remove-orphans --pull never"
 
 # ── Status ────────────────────────────────────────────────────────────────────
 echo ""
