@@ -44,6 +44,31 @@ export interface AgentDetail {
   file: string;
   content: string;
   metadata: AgentMetadata;
+  /** 1-based version counter: how many archived backups exist + 1. */
+  version?: number;
+}
+
+export interface UpdateAgentParams {
+  file: string;
+  content: string;
+  metadata?: AgentMetadata;
+}
+
+export interface UpdateAgentResponse {
+  file: string;
+  version: number;
+  archived_as: string;
+}
+
+export interface UploadAgentParams {
+  filename: string;
+  content: string;
+  overwrite?: boolean;
+}
+
+export interface UploadAgentResponse {
+  file: string;
+  created: boolean;
 }
 
 export interface HealthResponse {

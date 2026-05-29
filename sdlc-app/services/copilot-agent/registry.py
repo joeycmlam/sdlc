@@ -100,6 +100,7 @@ class AgentRegistry:
     """Loads all *.agent.md files from a directory into an id-keyed dict."""
 
     def __init__(self, agents_dir: Path) -> None:
+        self._agents_dir = agents_dir
         self._agents: dict[str, AgentRecord] = {}
         self._load(agents_dir)
 
@@ -121,6 +122,11 @@ class AgentRegistry:
                 )
             except Exception:
                 pass  # skip malformed files; errors are silent at startup
+
+    def reload(self) -> None:
+        """Re-scan the agents directory and rebuild the in-memory registry."""
+        self._agents.clear()
+        self._load(self._agents_dir)
 
     def get(self, agent_id: str) -> Optional[AgentRecord]:
         return self._agents.get(agent_id)

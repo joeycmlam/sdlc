@@ -2,6 +2,51 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
+export async function PUT(request: NextRequest) {
+  const body = await request.json().catch(() => null);
+  if (!body?.file || body.content === undefined) {
+    return NextResponse.json({ error: "file and content are required" }, { status: 400 });
+  }
+
+  // Try backend first
+  try {
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const res = await fetch(`${backendUrl}/agents/content`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    return NextResponse.json(data, { status: res.status });
+  } catch {
+    // Backend offline — write directly to local filesystem (dev mode only)
+  }
+
+  try {
+    const agentsDir = path.resolve(process.cwd(), "services", "copilot-agent", "agents");
+    const safeFile = path.basename(body.file as string);
+    const filePath = path.resolve(agentsDir, safeFile);
+    if (!filePath.startsWith(agentsDir + path.sep) && filePath !== agentsDir) {
+      return NextResponse.json({ error: "Invalid file path" }, { status: 400 });
+    }
+    if (!fs.existsSync(filePath)) {
+      return NextResponse.json({ error: "Agent file not found" }, { status: 404 });
+    }
+
+    // Archive current version locally
+    const versionsDir = path.join(agentsDir, "versions");
+    fs.mkdirSync(versionsDir, { recursive: true });
+    const existing = fs.readdirSync(versionsDir).filter((f) => f.startsWith(safeFile + ".v"));
+    const nextV = existing.length + 1;
+    fs.copyFileSync(filePath, path.join(versionsDir, `${safeFile}.v${nextV}`));
+
+    fs.writeFileSync(filePath, body.content as string, "utf-8");
+    return NextResponse.json({ file: safeFile, version: nextV + 1, archived_as: `versions/${safeFile}.v${nextV}` });
+  } catch {
+    return NextResponse.json({ error: "Failed to update agent file" }, { status: 500 });
+  }
+}
+
 export async function GET(request: NextRequest) {
   const file = request.nextUrl.searchParams.get("file");
   if (!file) {

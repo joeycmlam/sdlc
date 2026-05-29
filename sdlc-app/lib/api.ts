@@ -13,6 +13,10 @@ import type {
   SessionsResponse,
   StreamAgentParams,
   StreamEvent,
+  UpdateAgentParams,
+  UpdateAgentResponse,
+  UploadAgentParams,
+  UploadAgentResponse,
 } from "./types";
 
 export async function fetchAgents(): Promise<AgentsResponse> {
@@ -24,6 +28,32 @@ export async function fetchAgents(): Promise<AgentsResponse> {
 export async function fetchAgentContent(file: string): Promise<AgentDetail> {
   const res = await fetch(`/api/agents/content?file=${encodeURIComponent(file)}`);
   if (!res.ok) throw new Error("Failed to fetch agent content");
+  return res.json();
+}
+
+export async function updateAgentContent(params: UpdateAgentParams): Promise<UpdateAgentResponse> {
+  const res = await fetch("/api/agents/content", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { detail?: string; error?: string } | null;
+    throw new Error(data?.detail || data?.error || `Failed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function uploadAgent(params: UploadAgentParams): Promise<UploadAgentResponse> {
+  const res = await fetch("/api/agents/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { detail?: string; error?: string } | null;
+    throw new Error(data?.detail || data?.error || `Failed: HTTP ${res.status}`);
+  }
   return res.json();
 }
 

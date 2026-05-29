@@ -1,6 +1,7 @@
 "use client";
 
-import { Github, Settings, RotateCcw } from "lucide-react";
+import { Github, Settings, RotateCcw, LogOut } from "lucide-react";
+import { useSession, signOut } from "next-auth/react";
 import { StatusIndicator } from "./status-indicator";
 import { ModelSelector } from "./model-selector";
 import type { ConnectionStatus } from "@/lib/types";
@@ -21,6 +22,8 @@ export function Header({
   onReset,
   isLoading,
 }: HeaderProps) {
+  const { data: session } = useSession();
+
   return (
     <header className="flex items-center justify-between px-6 py-4 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-40">
       <div className="flex items-center gap-4">
@@ -69,6 +72,39 @@ export function Header({
         >
           <Settings className="w-4 h-4 text-muted-foreground" />
         </button>
+        {session?.user && (
+          <>
+            <div className="h-6 w-px bg-border hidden sm:block" />
+            <div className="flex items-center gap-2">
+              {session.user.image ? (
+                <img
+                  src={session.user.image}
+                  alt={session.user.name ?? "User"}
+                  className="w-7 h-7 rounded-full border border-border"
+                  title={session.user.email ?? session.user.name ?? ""}
+                />
+              ) : (
+                <div
+                  className="w-7 h-7 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-medium"
+                  title={session.user.email ?? ""}
+                >
+                  {(session.user.name ?? session.user.email ?? "?")[0].toUpperCase()}
+                </div>
+              )}
+              <button
+                onClick={() => signOut({ callbackUrl: "/auth/signin" })}
+                title="Sign out"
+                className={cn(
+                  "flex items-center justify-center w-9 h-9 rounded-lg",
+                  "border border-border bg-card hover:bg-secondary",
+                  "transition-colors"
+                )}
+              >
+                <LogOut className="w-4 h-4 text-muted-foreground" />
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </header>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { X, Bot, Wrench, BookOpen, Zap, ChevronRight, Loader2, GitBranch, Building2 } from "lucide-react";
+import { X, Bot, Wrench, BookOpen, Zap, ChevronRight, Loader2, GitBranch, Building2, Pencil, Save, RotateCcw, CheckCircle2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useEffect, useState } from "react";
@@ -10,6 +10,7 @@ import {
   fetchAgentContent,
   fetchGitHubAgentContent,
   getAgentDisplayName,
+  updateAgentContent,
 } from "@/lib/api";
 import type { AgentMetadata } from "@/lib/types";
 
@@ -35,6 +36,7 @@ export type AgentContextSource =
 interface AgentContextPanelProps {
   source: AgentContextSource | null;
   onClose: () => void;
+  onUpdated?: () => void;
 }
 
 interface LoadedDetail {
@@ -43,21 +45,31 @@ interface LoadedDetail {
   scope?: "repo" | "org" | "local";
   metadata: AgentMetadata;
   body: string;
+  version?: number;
+  file?: string;
 }
 
-export function AgentContextPanel({ source, onClose }: AgentContextPanelProps) {
+export function AgentContextPanel({ source, onClose, onUpdated }: AgentContextPanelProps) {
   const [detail, setDetail] = useState<LoadedDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [savedVersion, setSavedVersion] = useState<number | null>(null);
 
   useEffect(() => {
     if (!source) {
       setDetail(null);
+      setIsEditing(false);
+      setSavedVersion(null);
       return;
     }
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setIsEditing(false);
+    setSavedVersion(null);
 
     (async () => {
       try {
@@ -70,6 +82,8 @@ export function AgentContextPanel({ source, onClose }: AgentContextPanelProps) {
             scope: "local",
             metadata: data.metadata,
             body: data.content,
+            version: data.version,
+            file: source.file,
           });
         } else {
           const data = await fetchGitHubAgentContent(source.sourceRepo, source.path);
@@ -97,6 +111,33 @@ export function AgentContextPanel({ source, onClose }: AgentContextPanelProps) {
       cancelled = true;
     };
   }, [source]);
+
+  async function handleSave() {
+    if (!detail?.file || saving) return;
+    setSaving(true);
+    try {
+      const res = await updateAgentContent({ file: detail.file, content: editContent });
+      setDetail((d) => d ? { ...d, body: editContent, version: res.version } : d);
+      setSavedVersion(res.version);
+      setIsEditing(false);
+      onUpdated?.();
+    } catch (err) {
+      setError((err as Error).message || "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleStartEdit() {
+    setEditContent(detail?.body ?? "");
+    setSavedVersion(null);
+    setIsEditing(true);
+  }
+
+  function handleCancelEdit() {
+    setIsEditing(false);
+    setEditContent("");
+  }
 
   const isOpen = source !== null;
 
@@ -129,15 +170,52 @@ export function AgentContextPanel({ source, onClose }: AgentContextPanelProps) {
             <Bot className="w-5 h-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="font-semibold text-lg truncate">
-              {detail?.title || "Agent Context"}
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-lg truncate">
+                {detail?.title || "Agent Context"}
+              </h2>
+              {detail?.version != null && (
+                <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono border border-border bg-secondary text-muted-foreground">
+                  v{detail.version}
+                </span>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground truncate">
               {detail?.subtitle || ""}
             </p>
           </div>
           {detail?.scope && detail.scope !== "local" && (
             <ScopeBadge scope={detail.scope} />
+          )}
+          {detail?.file && !isEditing && (
+            <button
+              onClick={handleStartEdit}
+              title="Edit agent"
+              className="p-2 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
+          {isEditing && (
+            <>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                title="Save changes"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                Save
+              </button>
+              <button
+                onClick={handleCancelEdit}
+                disabled={saving}
+                title="Cancel editing"
+                className="p-2 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+            </>
           )}
           <button
             onClick={onClose}
@@ -162,7 +240,37 @@ export function AgentContextPanel({ source, onClose }: AgentContextPanelProps) {
             </div>
           )}
 
-          {detail && !loading && (
+          {savedVersion != null && (
+            <div className="mx-6 mt-4 flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              Saved as v{savedVersion}. Previous version archived.
+            </div>
+          )}
+
+          {detail && !loading && isEditing && (
+            <div className="flex flex-col flex-1 px-6 py-5 gap-3">
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Pencil className="w-3.5 h-3.5" />
+                Edit System Prompt
+              </div>
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                className={cn(
+                  "flex-1 min-h-[400px] w-full rounded-md border border-border bg-background",
+                  "px-3 py-2 text-sm font-mono leading-relaxed resize-y",
+                  "focus:outline-none focus:ring-2 focus:ring-primary/50",
+                )}
+                spellCheck={false}
+                disabled={saving}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                The current version will be archived before saving.
+              </p>
+            </div>
+          )}
+
+          {detail && !loading && !isEditing && (
             <div className="divide-y divide-border">
               <MetadataSection metadata={detail.metadata} />
               <div className="px-6 py-5">
