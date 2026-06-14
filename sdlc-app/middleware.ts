@@ -1,10 +1,19 @@
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import withAuth from "next-auth/middleware";
 
-export default withAuth({
+const authEnabled = process.env.NEXT_PUBLIC_AUTH_ENABLED !== "false";
+
+const authMiddleware = withAuth({
   callbacks: {
     authorized: ({ token }) => !!token,
   },
 });
+
+export default function middleware(req: NextRequest) {
+  if (!authEnabled) return NextResponse.next();
+  return (authMiddleware as unknown as (req: NextRequest) => Response)(req);
+}
 
 export const config = {
   matcher: [

@@ -100,10 +100,13 @@ services:
         # Baked into the Next.js bundle at build time; also read at runtime
         # by server-side API routes that proxy to the backend.
         NEXT_PUBLIC_API_URL: http://copilot-agent:8001
+        # Set to "false" to disable Google login (open access mode).
+        NEXT_PUBLIC_AUTH_ENABLED: ${NEXT_PUBLIC_AUTH_ENABLED:-true}
     restart: unless-stopped
     env_file: .env
     environment:
       NEXT_PUBLIC_API_URL: http://copilot-agent:8001
+      NEXT_PUBLIC_AUTH_ENABLED: ${NEXT_PUBLIC_AUTH_ENABLED:-true}
       PORT: "3000"
     ports:
       - "3000:3000"

@@ -23,6 +23,7 @@ export function Header({
   isLoading,
 }: HeaderProps) {
   const { data: session } = useSession();
+  const authEnabled = process.env.NEXT_PUBLIC_AUTH_ENABLED !== "false";
 
   return (
     <header className="flex items-center justify-between px-6 py-4 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-40">
@@ -72,7 +73,7 @@ export function Header({
         >
           <Settings className="w-4 h-4 text-muted-foreground" />
         </button>
-        {session?.user && (
+        {authEnabled && session?.user && (
           <>
             <div className="h-6 w-px bg-border hidden sm:block" />
             <div className="flex items-center gap-2">
