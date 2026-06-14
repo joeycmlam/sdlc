@@ -26,6 +26,7 @@ from redis import asyncio as aioredis
 from agent_copilot import AgentConfig, AgentRunner, _TOOL_TAG_MAP
 from checkpoint_gate import CheckpointGate
 from event_bus import EventBus
+from healer import Healer
 from session_store import RedisSessionStore
 
 _here = Path(__file__).parent
@@ -152,6 +153,14 @@ async def run_session_job(ctx: dict, session_id: str) -> None:
         except asyncio.QueueFull:
             pass
 
+    def _on_heal(event: dict) -> None:
+        # Route heal telemetry through the same ordered queue as agent events
+        # so the session timeline shows retries inline with tool calls.
+        try:
+            publish_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
+
     try:
         agent_path = _resolve_agent_path(session.agent_file)
         system_prompt = agent_path.read_text(encoding="utf-8").strip()
@@ -186,7 +195,8 @@ async def run_session_job(ctx: dict, session_id: str) -> None:
             bus=bus,
             redis=ctx["redis_pubsub"],
         )
-        runner = AgentRunner(config, checkpoint_handler=gate.check)
+        healer = Healer(publish=_on_heal)
+        runner = AgentRunner(config, checkpoint_handler=gate.check, healer=healer)
 
         ctx_parts = [session.extra_context] if session.extra_context else []
         if session.jira_url:

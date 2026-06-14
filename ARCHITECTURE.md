@@ -82,41 +82,46 @@ The SDLC AI Agent Platform automates software development lifecycle workflows by
 
 ### High-Level Component Diagram
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                         Browser                                   │
-│  ┌────────────┐  ┌──────────────┐  ┌─────────────────────────┐ │
-│  │ Chat View  │  │ Sessions View │  │ Issues View / Settings │ │
-│  └────────────┘  └──────────────┘  └─────────────────────────┘ │
-└─────────────┬────────────────────────────────────────────────────┘
-              │ HTTP / SSE
-              ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                    Next.js Frontend (:3000)                      │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │ API Routes: /api/health, /api/agents, /api/sessions, etc.│ │
-│  └───────────────────┬────────────────────────────────────────┘ │
-└────────────────────┬─┴──────────────────────────────────────────┘
-                     │
-        ┌────────────┼────────────┬──────────────────┐
-        │            │            │                  │
-        ▼            ▼            ▼                  ▼
-┌──────────────┐ ┌──────────────────┐ ┌──────────────┐ ┌─────────────┐
-│              │ │  Copilot Agent   │ │  Atlassian   │ │             │
-│    Redis     │ │  API Server      │ │  Bridge      │ │ Arq Worker  │
-│    :6379     │ │  :8001           │ │  :8002       │ │   Pool      │
-│              │ │                  │ │              │ │             │
-│ ┌──────────┐ │ │ ┌──────────────┐ │ │ ┌──────────┐ │ │ ┌─────────┐ │
-│ │ Sessions │ │ │ │ AgentRunner  │ │ │ │ Jira API │ │ │ │ Workers │ │
-│ │  (JSON)  │◄─┼─┤ Session Store│ │ │ │          │ │ │ │  (1..N) │ │
-│ ├──────────┤ │ │ ├──────────────┤ │ │ ├──────────┤ │ │ ├─────────┤ │
-│ │ Streams  │◄─┼─┤ Event Bus    │ │ │ │Confluence│ │ │ │ Consumes│ │
-│ │ (Events) │ │ │ ├──────────────┤ │ │ │   API    │ │ │ │ Jobs    │ │
-│ ├──────────┤ │ │ │ Registries   │ │ │ └──────────┘ │ │ └─────────┘ │
-│ │Arq Queue │◄─┼─┤ ├──────────────┤ │ └──────────────┘ └─────────────┘
-│ │          │ │ │ │ GitHub Tools │ │
-│ └──────────┘ │ │ └──────────────┘ │
-└──────────────┘ └──────────────────┘
+```mermaid
+graph TD
+    Browser["Browser\nChat View · Sessions View · Issues · Settings"]
+
+    subgraph frontend["Next.js Frontend :3000"]
+        APIRoutes["API Routes\n/api/health · /api/agents · /api/sessions · /api/run"]
+    end
+
+    subgraph copilot["Copilot Agent :8001"]
+        AgentRunner["AgentRunner"]
+        SessionStore["Session Store"]
+        EventBus["Event Bus"]
+        Registries["Registries\nAgents · Skills · Teams"]
+        GitHubTools["GitHub Tools"]
+    end
+
+    subgraph redis["Redis :6379"]
+        Sessions["Sessions (JSON + TTL)"]
+        Streams["Streams (Events)"]
+        ArqQueue["Arq Queue"]
+    end
+
+    subgraph atlassian["Atlassian Bridge :8002"]
+        JiraProxy["Jira API Proxy"]
+        ConfluenceProxy["Confluence API Proxy"]
+    end
+
+    subgraph workers["Arq Worker Pool"]
+        WorkerN["Workers 1..N"]
+    end
+
+    Browser -->|HTTP / SSE| frontend
+    frontend -->|REST| copilot
+    frontend -->|REST| atlassian
+    SessionStore <-->|read / write| Sessions
+    EventBus -->|publish| Streams
+    AgentRunner -->|enqueue| ArqQueue
+    workers <-->|dequeue / complete| ArqQueue
+    workers -->|update state| Sessions
+    workers -->|publish events| Streams
 ```
 
 ### Component Descriptions
@@ -234,19 +239,28 @@ class Session(BaseModel):
 
 ### Session State Machine
 
-```
-pending
-  │
-  ├─> running
-  │     │
-  │     ├─> awaiting_approval ──┬─> approved ──┐
-  │     │                        └─> rejected ──┤
-  │     │                                       │
-  │     └─────────────────────────────────> running (loop)
-  │                                             │
-  └─────────────────────────────────────────> completed
-  │
-  └─> failed (terminal)
+```mermaid
+stateDiagram-v2
+    [*] --> pending : session created
+    pending --> running : worker picks up job
+    pending --> failed
+
+    running --> awaiting_approval : tool requires sign-off
+    running --> completed : final answer
+    running --> failed
+
+    awaiting_approval --> approved : user approves
+    awaiting_approval --> rejected : user rejects
+    awaiting_approval --> failed
+
+    approved --> running : resume execution
+    approved --> completed
+
+    rejected --> running : skip and continue
+    rejected --> completed
+
+    completed --> [*]
+    failed --> [*]
 ```
 
 **State Descriptions**:
@@ -295,27 +309,19 @@ Each event in `session:{id}:events` is a Redis Stream entry with:
 
 ### GitHub Integration
 
-```
-┌──────────────────┐
-│ Copilot Agent    │
-│                  │
-│  ┌────────────┐  │       ┌─────────────────────┐
-│  │ AgentRunner│──┼──────►│ GitHub Copilot CLI  │
-│  └────────────┘  │       │ (gh copilot)        │
-│                  │       └─────────────────────┘
-│  ┌────────────┐  │               │
-│  │GitHub Tools│──┼───────────────┘
-│  └────────────┘  │       (OAuth via gh auth)
-└──────────────────┘
-         │
-         │ HTTPS (REST API)
-         ▼
-┌─────────────────────────┐
-│ GitHub REST API         │
-│ - Issues                │
-│ - Pull Requests         │
-│ - Repositories          │
-└─────────────────────────┘
+```mermaid
+graph LR
+    subgraph copilot["Copilot Agent"]
+        AgentRunner["AgentRunner"]
+        GitHubTools["GitHub Tools"]
+    end
+
+    CLI["GitHub Copilot CLI\ngh copilot"]
+    GitHubAPI["GitHub REST API\nIssues · PRs · Repos"]
+
+    AgentRunner -->|subprocess| CLI
+    CLI -->|"OAuth via gh auth"| GitHubAPI
+    GitHubTools -->|"HTTPS + GH_TOKEN"| GitHubAPI
 ```
 
 **Authentication Flow**:
@@ -325,24 +331,27 @@ Each event in `session:{id}:events` is a Redis Stream entry with:
 
 ### Atlassian Integration
 
-```
-┌──────────────────┐
-│ Copilot Agent    │       ┌──────────────────┐       ┌───────────────┐
-│                  │       │ Atlassian Bridge │       │ Jira Cloud    │
-│  ┌────────────┐  │ HTTP  │                  │ HTTPS │               │
-│  │bash_exec   │──┼──────►│ /jira/issue/{key}│──────►│ REST API v3   │
-│  │(jira-cli)  │  │       │                  │       │               │
-│  └────────────┘  │       └──────────────────┘       └───────────────┘
-│                  │                │
-│  ┌────────────┐  │                │                 ┌───────────────┐
-│  │read_jira   │──┼────────────────┘                 │ Confluence    │
-│  └────────────┘  │                                  │ Cloud         │
-│                  │       ┌──────────────────┐       │               │
-│  ┌────────────┐  │       │/confluence/page/ │       │ REST API v2   │
-│  │confluence  │──┼──────►│      {id}        │──────►│               │
-│  │tools       │  │       └──────────────────┘       └───────────────┘
-│  └────────────┘  │
-└──────────────────┘
+```mermaid
+graph LR
+    subgraph copilot["Copilot Agent"]
+        JiraCLI["bash_exec\njira-cli"]
+        ReadJira["read_jira tool"]
+        ConfluenceTool["read_confluence tool"]
+    end
+
+    subgraph bridge["Atlassian Bridge :8002"]
+        JiraProxy["/jira/issue/{key}"]
+        ConfluenceProxy["/confluence/page/{id}"]
+    end
+
+    Jira["Jira Cloud\nREST API v3"]
+    Confluence["Confluence Cloud\nREST API v2"]
+
+    JiraCLI -->|HTTP| bridge
+    ReadJira -->|HTTP| JiraProxy
+    ConfluenceTool -->|HTTP| ConfluenceProxy
+    JiraProxy -->|"HTTPS + API Token"| Jira
+    ConfluenceProxy -->|"HTTPS + API Token"| Confluence
 ```
 
 **Authentication Flow**:
@@ -417,36 +426,26 @@ services:
 
 ### Kubernetes (Production)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                          Ingress                                │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ /            │  │ /api/agent/* │  │ /api/atlassian/*    │  │
-│  │ → frontend   │  │ → copilot    │  │ → atlassian-bridge  │  │
-│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-         │                  │                      │
-         ▼                  ▼                      ▼
-┌─────────────────┐  ┌────────────────┐  ┌──────────────────┐
-│ frontend        │  │ copilot-agent  │  │ atlassian-bridge │
-│ Deployment      │  │ Deployment     │  │ Deployment       │
-│ Replicas: 2     │  │ Replicas: 3    │  │ Replicas: 2      │
-└─────────────────┘  └────────────────┘  └──────────────────┘
-                             │
-                             ▼
-                     ┌────────────────┐
-                     │ arq-worker     │
-                     │ Deployment     │
-                     │ Replicas: 5    │
-                     └────────────────┘
-                             │
-                             ▼
-                     ┌────────────────┐
-                     │ Redis          │
-                     │ StatefulSet    │
-                     │ or Managed     │
-                     │ (ElastiCache)  │
-                     └────────────────┘
+```mermaid
+graph TD
+    subgraph ingress["Ingress"]
+        Route1["/ → frontend"]
+        Route2["/api/agent/* → copilot-agent"]
+        Route3["/api/atlassian/* → atlassian-bridge"]
+    end
+
+    Frontend["frontend Deployment\nReplicas: 2"]
+    CopilotAgent["copilot-agent Deployment\nReplicas: 3"]
+    AtlassianBridge["atlassian-bridge Deployment\nReplicas: 2"]
+    ArqWorker["arq-worker Deployment\nReplicas: 5"]
+    Redis["Redis StatefulSet\nor Managed (ElastiCache / Azure Cache)"]
+
+    Route1 --> Frontend
+    Route2 --> CopilotAgent
+    Route3 --> AtlassianBridge
+    CopilotAgent --> ArqWorker
+    CopilotAgent --> Redis
+    ArqWorker --> Redis
 ```
 
 **Scaling Strategy**:
@@ -544,32 +543,24 @@ _TRANSITIONS: dict[SessionState, set[SessionState]] = {
 
 ### Checkpoint Flow
 
-```
-Agent Running
-     │
-     ├─ Tool requires approval?
-     │      ├─ No  → Execute tool → Continue
-     │      └─ Yes ↓
-     │
-     ├─ Publish checkpoint event
-     │  {
-     │    "type": "checkpoint",
-     │    "tool_name": "create_github_issue",
-     │    "tool_args": {...}
-     │  }
-     │
-     ├─ Set state = awaiting_approval
-     │
-     ├─ Worker pauses, listens on checkpoint:{session_id} channel
-     │
-     ├─ User calls POST /sessions/{id}/approve
-     │  {"action": "approve"}  # or "reject"
-     │
-     ├─ Decision published to checkpoint:{session_id}
-     │
-     ├─ Worker receives decision
-     │      ├─ approve → Execute tool → Set state = running → Continue
-     │      └─ reject  → Skip tool → Set state = running → Continue or abort
+### Checkpoint Flow
+
+```mermaid
+flowchart TD
+    A[Agent Running] --> B{Tool requires approval?}
+    B -- No --> C[Execute Tool]
+    C --> D[Continue]
+    B -- Yes --> E["Publish checkpoint event\n{type, tool_name, tool_args}"]
+    E --> F[Set state = awaiting_approval]
+    F --> G["Worker pauses\nlistens on checkpoint:{session_id}"]
+    G --> H["User calls POST /sessions/{id}/approve\n{action: approve | reject}"]
+    H --> I{Decision}
+    I -- approve --> J[Execute Tool]
+    J --> K[Set state = running]
+    K --> D
+    I -- reject --> L[Skip Tool]
+    L --> M[Set state = running]
+    M --> N[Continue or abort]
 ```
 
 ---

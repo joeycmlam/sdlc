@@ -28,6 +28,7 @@ interface AppShellProps {
 
 export function AppShell({ active, children, rightSlot }: AppShellProps) {
   const { data: session } = useSession();
+  const authEnabled = process.env.NEXT_PUBLIC_AUTH_ENABLED !== "false";
   const { data: healthData, error: healthError } = useSWR(
     "health",
     checkHealth,
@@ -81,7 +82,7 @@ export function AppShell({ active, children, rightSlot }: AppShellProps) {
             <StatusIndicator status={status} />
           </div>
           {rightSlot}
-          {session?.user && (
+          {authEnabled && session?.user && (
             <div className="flex items-center gap-2">
               {session.user.image ? (
                 <img

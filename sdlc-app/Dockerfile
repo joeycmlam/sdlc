@@ -23,6 +23,11 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL=http://localhost:8001
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# Toggle Google login on/off (default: enabled).
+# Set to "false" to allow open access without authentication.
+ARG NEXT_PUBLIC_AUTH_ENABLED=true
+ENV NEXT_PUBLIC_AUTH_ENABLED=$NEXT_PUBLIC_AUTH_ENABLED
+
 RUN pnpm build
 
 # ── Stage 3: runtime ──────────────────────────────────────────────────────────

@@ -1,9 +1,21 @@
 "use client";
 
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { Bot } from "lucide-react";
 
+const authEnabled = process.env.NEXT_PUBLIC_AUTH_ENABLED !== "false";
+
 export default function SignInPage() {
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!authEnabled) router.replace("/");
+  }, [router]);
+
+  if (!authEnabled) return null;
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6 px-6">
