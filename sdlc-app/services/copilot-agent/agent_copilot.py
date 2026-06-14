@@ -41,6 +41,14 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from healer import (
+    Healer,
+    is_preflight_exception,
+    is_transient_exception,
+    is_transient_status,
+    run_with_retry,
+)
+
 # Auth mode resolution (evaluated once at import time):
 #   PAT mode  — GH_TOKEN or GITHUB_TOKEN is set in the environment.
 #               SubprocessConfig(github_token=...) is passed to CopilotClient.
@@ -207,8 +215,13 @@ class WorkflowAnalyser:
 class BashTool:
     """Executes shell commands on behalf of the LLM."""
 
-    def __init__(self, checkpoint_handler: CheckpointHandler | None = None) -> None:
+    def __init__(
+        self,
+        checkpoint_handler: CheckpointHandler | None = None,
+        healer: Healer | None = None,
+    ) -> None:
         self._checkpoint_handler = checkpoint_handler
+        self._healer = healer or Healer()
         # Set transiently by AgentRunner.run() to stream bash command/result
         # details to the event bus.  None = no-op (default).
         self.on_bash_result: Callable[[str, str], None] | None = None
@@ -286,12 +299,31 @@ class BashTool:
                 )
 
         print(f"\n\033[36m[Tool: bash_exec]\033[0m {command}", flush=True)
-        try:
-            proc = await asyncio.create_subprocess_exec(
+
+        async def _launch() -> asyncio.subprocess.Process:
+            return await asyncio.create_subprocess_exec(
                 "/bin/sh", "-c", command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+
+        # Subprocess-launch failures (EAGAIN, EMFILE, fork churn) are infra-level
+        # transients — retry. Non-zero exit and the 120s timeout below are
+        # semantic outcomes the LLM should see, not heal.
+        proc, launch_exc, _ = await run_with_retry(
+            healer=self._healer,
+            tool="bash_exec",
+            args={"command": command},
+            op=_launch,
+            is_retriable=lambda e, _s: isinstance(e, OSError),
+        )
+        if launch_exc is not None:
+            return ToolResult(
+                text_result_for_llm=f"[Error: {launch_exc}]",
+                result_type="failure",
+            )
+
+        try:
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(), timeout=120
@@ -336,10 +368,15 @@ class AgentRunner:
         self,
         config: AgentConfig,
         checkpoint_handler: CheckpointHandler | None = None,
+        healer: Healer | None = None,
     ) -> None:
         self._config = config
         self._checkpoint_handler = checkpoint_handler
-        self._bash_tool = BashTool(checkpoint_handler=checkpoint_handler)
+        self._healer = healer or Healer()
+        self._bash_tool = BashTool(
+            checkpoint_handler=checkpoint_handler,
+            healer=self._healer,
+        )
         self._finished: bool = False
 
     _INVOKE_AGENT_SCHEMA = {
@@ -640,27 +677,45 @@ class AgentRunner:
         if skills:
             payload["skills"] = skills
 
-        try:
+        async def _do_create() -> dict:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(f"{api_base}/github/issues", json=payload)
                 resp.raise_for_status()
-                data = resp.json()
-            assigned = "assigned to Copilot" if data.get("copilot_assigned") else "Copilot assignment skipped"
+                return resp.json()
+
+        # create_github_issue is non-idempotent. Only retry when we're sure the
+        # request never reached the server (ConnectError before send). Any
+        # HTTP status reply or mid-request error is left as-is — duplicate
+        # issues are worse than a single user-visible failure.
+        data, exc, status = await run_with_retry(
+            healer=self._healer,
+            tool="create_github_issue",
+            args={"owner": owner, "repo": repo, "title": title},
+            op=_do_create,
+            is_retriable=lambda e, _s: is_preflight_exception(e),
+        )
+        if exc is None:
+            assigned = (
+                "assigned to Copilot"
+                if data.get("copilot_assigned")
+                else "Copilot assignment skipped"
+            )
             return ToolResult(
                 text_result_for_llm=(
                     f"Created issue #{data['number']} ({assigned}): {data['html_url']}"
                 )
             )
-        except httpx.HTTPStatusError as exc:
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
             return ToolResult(
-                text_result_for_llm=f"[Error creating issue: HTTP {exc.response.status_code} — {exc.response.text}]",
+                text_result_for_llm=(
+                    f"[Error creating issue: HTTP {status} — {exc.response.text}]"
+                ),
                 result_type="failure",
             )
-        except Exception as exc:
-            return ToolResult(
-                text_result_for_llm=f"[Error creating issue: {exc}]",
-                result_type="failure",
-            )
+        return ToolResult(
+            text_result_for_llm=f"[Error creating issue: {exc}]",
+            result_type="failure",
+        )
 
     async def _handle_read_confluence(self, inv) -> object:
         import httpx
@@ -674,30 +729,43 @@ class AgentRunner:
                 result_type="failure",
             )
 
-        try:
+        _bridge = os.getenv("ATLASSIAN_BRIDGE_URL", "http://localhost:8002")
+
+        async def _do_fetch() -> dict:
             async with httpx.AsyncClient(timeout=30) as client:
-                _bridge = os.getenv("ATLASSIAN_BRIDGE_URL", "http://localhost:8002")
                 resp = await client.post(
                     f"{_bridge}/confluence/fetch",
                     json={"url": url},
                 )
                 resp.raise_for_status()
-                data = resp.json()
-                content = data.get("body_markdown") or data.get("content") or str(data)
-                title = data.get("title", "")
-                return ToolResult(
-                    text_result_for_llm=f"# {title}\n\n{content}" if title else content,
-                )
-        except httpx.HTTPStatusError as exc:
+                return resp.json()
+
+        # read_confluence is an idempotent GET (POST is just the bridge's
+        # request shape) — safe to retry on any transient.
+        data, exc, status = await run_with_retry(
+            healer=self._healer,
+            tool="read_confluence",
+            args={"url": url},
+            op=_do_fetch,
+            is_retriable=lambda e, s: is_transient_exception(e) or is_transient_status(s),
+        )
+        if exc is None:
+            content = data.get("body_markdown") or data.get("content") or str(data)
+            title = data.get("title", "")
             return ToolResult(
-                text_result_for_llm=f"[Error fetching Confluence page: HTTP {exc.response.status_code} — {exc.response.text}]",
+                text_result_for_llm=f"# {title}\n\n{content}" if title else content,
+            )
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+            return ToolResult(
+                text_result_for_llm=(
+                    f"[Error fetching Confluence page: HTTP {status} — {exc.response.text}]"
+                ),
                 result_type="failure",
             )
-        except Exception as exc:
-            return ToolResult(
-                text_result_for_llm=f"[Error fetching Confluence page: {exc}]",
-                result_type="failure",
-            )
+        return ToolResult(
+            text_result_for_llm=f"[Error fetching Confluence page: {exc}]",
+            result_type="failure",
+        )
 
     async def _handle_invoke_agent(self, inv) -> object:
         from copilot.tools import ToolResult
