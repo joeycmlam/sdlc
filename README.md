@@ -76,7 +76,76 @@ The platform consists of four primary components orchestrated through Docker Com
 
 ### Local Development (without Docker)
 
-See individual README files:
+Run each service in a separate terminal. Start them in the order below.
+
+#### 1. Redis (required for sessions and worker)
+
+```bash
+# Using Docker for Redis only
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+
+# Or via Homebrew (macOS)
+brew install redis && brew services start redis
+```
+
+#### 2. Atlassian Bridge
+
+```bash
+cd atlassian-bridge
+
+# One-time setup
+python -m venv .venv
+source .venv/bin/activate        # macOS/Linux
+pip install -e .
+
+# Configure credentials
+cp .env.example .env             # edit with JIRA_URL, JIRA_USER, JIRA_API_TOKEN, etc.
+
+# Start the service (http://localhost:8002)
+atlassian-bridge
+```
+
+#### 3. Copilot Agent API + Worker
+
+```bash
+cd sdlc-app/services/copilot-agent
+
+# One-time setup
+python -m venv .venv
+source .venv/bin/activate        # macOS/Linux
+pip install -r requirements.txt
+
+# Authenticate GitHub Copilot CLI (one-time)
+gh extension install github/gh-copilot
+gh auth login
+
+# Terminal A — Arq worker pool (required for /sessions/* endpoints)
+source .venv/bin/activate
+agent-worker
+
+# Terminal B — FastAPI server (http://localhost:8001)
+source .venv/bin/activate
+agent-api --port 8001
+```
+
+#### 4. Frontend (Next.js)
+
+```bash
+cd sdlc-app
+
+# One-time setup
+pnpm install
+
+# Start dev server (http://localhost:3000)
+NEXT_PUBLIC_API_URL=http://localhost:8001 pnpm dev
+```
+
+> **Service URLs (local)**
+> - Frontend: http://localhost:3000
+> - Copilot Agent API + docs: http://localhost:8001 / http://localhost:8001/docs
+> - Atlassian Bridge: http://localhost:8002
+
+For full per-service documentation see:
 - [Frontend (sdlc-app)](./sdlc-app/README.md)
 - [Copilot Agent](./sdlc-app/services/copilot-agent/README.md)
 - [Atlassian Bridge](./atlassian-bridge/README.md)
