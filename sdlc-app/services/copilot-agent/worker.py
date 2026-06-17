@@ -24,6 +24,7 @@ from arq.connections import RedisSettings
 from redis import asyncio as aioredis
 
 from agent_copilot import AgentConfig, AgentRunner, _TOOL_TAG_MAP
+from runner_factory import make_runner
 from checkpoint_gate import CheckpointGate
 from event_bus import EventBus
 from healer import Healer
@@ -229,7 +230,7 @@ async def run_session_job(ctx: dict, session_id: str) -> None:
             redis=ctx["redis_pubsub"],
         )
         healer = Healer(publish=_on_heal)
-        runner = AgentRunner(config, checkpoint_handler=gate.check, healer=healer)
+        runner = make_runner(config, checkpoint_handler=gate.check, healer=healer)
 
         ctx_parts = [session.extra_context] if session.extra_context else []
         if session.jira_url:

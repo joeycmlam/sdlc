@@ -37,13 +37,18 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator, Literal, Optional
+from typing import AsyncIterator, Awaitable, Callable, Literal, Optional
 
 from dotenv import load_dotenv
 
-# Load .env from the directory containing this file so GITHUB_TOKEN / GH_TOKEN
-# are available before any os.getenv() call below.
-load_dotenv(Path(__file__).parent / ".env")
+# Load .env files so credentials are available before any os.getenv() call.
+# We check both the service-local .env (canonical for local dev / Docker) and
+# the repo-root .env (canonical for `docker compose --env-file`), with the
+# service-local file winning when both define the same key.
+_SERVICE_ENV = Path(__file__).parent / ".env"
+_REPO_ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
+load_dotenv(_REPO_ROOT_ENV, override=False)
+load_dotenv(_SERVICE_ENV, override=True)
 
 import frontmatter
 import httpx
@@ -63,6 +68,7 @@ from redis import asyncio as aioredis
 _GH_TOKEN: Optional[str] = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
 
 from agent_copilot import AgentConfig, AgentRunner, CLI  # noqa: F401, E402
+from runner_factory import make_runner
 from checkpoint_gate import DecisionAction, publish_decision
 from event_bus import EventBus
 from registry import AgentRegistry, SkillRegistry, TeamRegistry
@@ -288,7 +294,7 @@ def _list_version_numbers(filename: str) -> list[int]:
     return sorted(nums)
 
 
-def _build_runner(req: RunRequest) -> AgentRunner:
+def _build_runner(req: RunRequest):
     agent_path = _resolve_agent_path(req.agent_file)
     system_prompt = agent_path.read_text(encoding="utf-8").strip()
     config = AgentConfig(
@@ -298,7 +304,7 @@ def _build_runner(req: RunRequest) -> AgentRunner:
         max_turns=min(req.max_turns, 50),
         base_dir=_here,
     )
-    return AgentRunner(config)
+    return make_runner(config)
 
 
 # ---------------------------------------------------------------------------
@@ -467,21 +473,85 @@ _models_cache_lock = asyncio.Lock()
 
 
 async def _fetch_models_from_cli() -> list[dict]:
-    """Query the Copilot CLI for its current model catalog."""
+    """Query the Copilot CLI for its current model catalog.
+
+    Goes one level below ``client.list_models()`` to the raw JSON-RPC call,
+    so we sidestep the SDK's strict dataclass validation. The SDK's
+    ``ModelBilling.from_dict`` requires a ``multiplier`` field that recent
+    CLI builds omit for free / unmetered models — making the whole call fail
+    for everyone. Parsing the raw response keeps the endpoint working until
+    the SDK ↔ CLI version mismatch is sorted out upstream.
+    """
     from agent_copilot import _make_copilot_client
 
     async with _make_copilot_client() as client:
-        models = await client.list_models()
+        response = await client._client.request("models.list", {})
 
     out: list[dict] = []
-    for m in models:
-        billing = getattr(m, "billing", None)
+    for m in response.get("models", []):
+        if not m.get("id") or not m.get("name"):
+            continue
+        billing = m.get("billing") or {}
+        multiplier = billing.get("multiplier")
         out.append({
-            "id": m.id,
-            "name": m.name,
-            "billing_multiplier": billing.multiplier if billing else None,
+            "id": m["id"],
+            "name": m["name"],
+            "billing_multiplier": float(multiplier) if multiplier is not None else None,
         })
     return out
+
+
+async def _fetch_models_from_deepseek() -> list[dict]:
+    """Query DeepSeek's OpenAI-compatible /models endpoint.
+
+    Returns an empty list when DEEPSEEK_API_KEY is unset, so the dropdown
+    silently omits DeepSeek for users who haven't configured a key.
+    """
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        return []
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.get(
+            f"{base_url}/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+    # DeepSeek's billing isn't normalized to a GitHub-Models multiplier, so
+    # leave it null — the UI treats null as "unknown / no discount".
+    return [
+        {
+            "id": f"deepseek/{m['id']}",
+            "name": m.get("id", ""),
+            "billing_multiplier": None,
+        }
+        for m in data
+    ]
+
+
+async def _fetch_all_models() -> tuple[list[dict], list[str]]:
+    """Merge model catalogs from every configured provider.
+
+    Each provider is queried independently — one failing does not black out
+    the others. Returns (models, errors) so the endpoint can decide whether
+    an empty list with errors should be a 503 or a partial-success 200.
+    """
+    fetchers: list[tuple[str, Callable[[], Awaitable[list[dict]]]]] = [
+        ("github", _fetch_models_from_cli),
+        ("deepseek", _fetch_models_from_deepseek),
+    ]
+    results = await asyncio.gather(
+        *(f() for _, f in fetchers), return_exceptions=True
+    )
+    models: list[dict] = []
+    errors: list[str] = []
+    for (name, _), result in zip(fetchers, results):
+        if isinstance(result, Exception):
+            errors.append(f"{name}: {result}")
+        else:
+            models.extend(result)
+    return models, errors
 
 
 @app.get("/models")
@@ -491,14 +561,15 @@ async def list_models(refresh: bool = Query(False, description="Bypass cache."))
         now = time.time()
         if not refresh and _models_cache["data"] is not None and now < _models_cache["expires_at"]:
             return {"models": _models_cache["data"], "cached": True}
-        try:
-            data = await _fetch_models_from_cli()
-        except Exception as exc:
-            # Surface as 503 so the frontend can fall back to its own list.
-            raise HTTPException(status_code=503, detail=f"Failed to list models: {exc}")
+        data, errors = await _fetch_all_models()
+        if not data and errors:
+            # Every provider failed — surface as 503 so the frontend falls back.
+            raise HTTPException(
+                status_code=503, detail=f"Failed to list models: {'; '.join(errors)}"
+            )
         _models_cache["data"] = data
         _models_cache["expires_at"] = now + _MODELS_CACHE_TTL_SECONDS
-        return {"models": data, "cached": False}
+        return {"models": data, "cached": False, "errors": errors or None}
 
 
 @app.post("/run")

@@ -10,7 +10,7 @@ triggers:
   - "write.*requirement|acceptance criteria.*jira"
   - "create.*jira|new.*jira|jira.*new|jira.*ticket.*for|raise.*jira|open.*jira|log.*jira"
 skills: [read-jira, bdd-scenarios]
-tools: [read, search, edit, execute, agent]
+tools: [read, search, execute, agent]
 agents: [jira-reader, test-designer]
 argument-hint: "Jira ticket ID (e.g. SCRUM-42) OR natural language feature description (e.g. 'create a Jira for export to Excel feature')"
 ---
@@ -37,7 +37,7 @@ Always activate a delegate by calling the `invoke_agent` tool with the `agent_fi
 
 ## Workflow
 
-> **Execution rule**: Execute each step immediately via `bash_exec` or `invoke_agent` tool calls. Do NOT narrate or describe a step before executing it — act directly. Sub-tasks must always be delegated via `invoke_agent`; never generate sub-agent output inline.
+> **Execution rule**: Execute each step immediately via `bash_exec`, `write_file`, or `invoke_agent` tool calls. Do NOT narrate or describe a step before executing it — act directly. Sub-tasks must always be delegated via `invoke_agent`; never generate sub-agent output inline. For payloads longer than ~3 KB (full BRDs, long Jira comments, multi-section descriptions), ALWAYS stage them with `write_file` and pipe via stdin redirect — never inline them in a heredoc, which will exceed the bash command-length cap.
 
 ### Step 0a — Intent Detection *(always first)*
 
@@ -262,27 +262,40 @@ List every ambiguity, missing piece, or assumption that requires business confir
 
 Write the complete requirements back to the Jira ticket using the write commands below. All commands use `/jira-cli/jira_cli.py` (absolute container path).
 
-**5a. Update the description** — replace the ticket description with the full BRD drafted in Step 3. Pass the text via stdin using `-`:
+> **Heredoc cap**: `bash_exec` rejects commands longer than 4 KB, so a full BRD will NOT fit inside a heredoc. ALWAYS stage long payloads via the `write_file` tool first, then pipe the file into `jira_cli.py` via stdin redirect. Do NOT attempt to chunk the payload through multiple `python -c "open(...).write(...)"` invocations — that pattern burned the turn budget on previous runs and left tickets un-updated.
 
-```bash
-python /jira-cli/jira_cli.py <TICKET_ID> --update-description - <<'ENDDESC'
-<full BRD text from Step 3>
-ENDDESC
+**5a. Update the description** — replace the ticket description with the full BRD drafted in Step 3.
+
+First, stage the BRD via `write_file`:
+
+```
+write_file(
+  path="/app/tmp/brd.md",
+  content="<full BRD text from Step 3>",
+  mode="overwrite",
+)
 ```
 
-**5b. Add a summary comment** — post a comment listing the open questions from Step 4:
+Then update the ticket in a single `bash_exec` call:
 
 ```bash
-python /jira-cli/jira_cli.py <TICKET_ID> --add-comment - <<'ENDCMT'
-**BA Analysis Complete**
+python /jira-cli/jira_cli.py <TICKET_ID> --update-description - < /app/tmp/brd.md
+```
 
-Business requirements have been drafted and added to the ticket description.
+If the BRD exceeds the 256 KB `write_file` cap (unlikely but possible for very large tickets), split it across two calls: first `mode="overwrite"` with the first half, then `mode="append"` with the rest.
 
-**Open Questions (require BA/PO confirmation):**
-<numbered list from Step 4>
+**5b. Add a summary comment** — post a comment listing the open questions from Step 4. Stage the comment via `write_file`, then post:
 
-*Authored by BA Asset Management agent — please review and confirm.*
-ENDCMT
+```
+write_file(
+  path="/app/tmp/ba_comment.md",
+  content="**BA Analysis Complete**\n\nBusiness requirements have been drafted and added to the ticket description.\n\n**Open Questions (require BA/PO confirmation):**\n<numbered list from Step 4>\n\n*Authored by BA Asset Management agent — please review and confirm.*",
+  mode="overwrite",
+)
+```
+
+```bash
+python /jira-cli/jira_cli.py <TICKET_ID> --add-comment - < /app/tmp/ba_comment.md
 ```
 
 Both commands print a confirmation to stderr on success and exit non-zero on failure.

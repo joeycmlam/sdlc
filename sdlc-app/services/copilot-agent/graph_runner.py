@@ -105,7 +105,7 @@ def build_lc_tools(
         Runs the sub-agent in isolation with its own conversation history and
         turn budget. Returns the sub-agent's final text output as a string.
         """
-        from agent_copilot import AgentRunner
+        from runner_factory import make_runner
 
         if config.depth >= MAX_RECURSION_DEPTH:
             return "[Error: max sub-agent recursion depth reached]"
@@ -138,7 +138,7 @@ def build_lc_tools(
             base_dir=config.base_dir,
             allowed_tools=sub_allowed,
         )
-        result = await AgentRunner(
+        result = await make_runner(
             sub_config, checkpoint_handler=checkpoint_handler, healer=_healer
         ).run(instruction, extra_context=context, on_bash_result=on_bash_result)
         return result or "(sub-agent returned no output)"

@@ -60,8 +60,10 @@ from healer import (
 # still read _GITHUB_PAT, while the Copilot CLI subprocess never sees
 # GITHUB_TOKEN in its environment (which would break the OAuth handshake).
 _here = Path(__file__).parent
-load_dotenv(_here / ".env")
-load_dotenv(_here.parent / "jira-cli" / ".env")
+# Repo-root .env first (lowest precedence), then service-local files override.
+load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
+load_dotenv(_here / ".env", override=True)
+load_dotenv(_here.parent / "jira-cli" / ".env", override=True)
 
 _GITHUB_PAT: str | None = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
 
@@ -119,7 +121,7 @@ MAX_RECURSION_DEPTH = 2
 _TOOL_TAG_MAP: dict[str, list[str]] = {
     "read": [],                           # receive & analyse context; no active tools
     "search": ["read_confluence"],
-    "execute": ["bash_exec"],
+    "execute": ["bash_exec", "write_file"],
     "agent": ["invoke_agent"],
     "write": ["create_github_issue"],
 }
@@ -224,11 +226,11 @@ class WorkflowAnalyser:
             return (
                 f"Step {last_step} was completed. "
                 f"Continue with Step {last_step + 1} now, "
-                "executing all required commands via bash_exec or invoke_agent."
+                "executing all required commands via bash_exec, write_file, or invoke_agent."
             )
         return (
             "Please continue and complete the remaining steps, "
-            "executing all required commands via bash_exec or invoke_agent."
+            "executing all required commands via bash_exec, write_file, or invoke_agent."
         )
 
 
@@ -378,6 +380,142 @@ class BashTool:
 
 
 # ---------------------------------------------------------------------------
+# WriteFileTool — payload-to-disk channel that bypasses bash command-length cap
+# ---------------------------------------------------------------------------
+
+class WriteFileTool:
+    """Write a text payload to a sandboxed path.
+
+    Exists so agents can pass large content (BRDs, BDD scenarios, JSON
+    bodies) to other tools via stdin redirect (`cmd < /app/tmp/file`)
+    without encoding the payload into a bash command string and tripping
+    BashTool's 4 KB command cap.
+
+    Two sandbox roots are accepted:
+      - the project-local scratch dir (AGENT_TMP_DIR env var, default
+        `/app/tmp/` to match the Dockerfile) — the canonical location, so
+        operators can mount or inspect it from the host.
+      - `/tmp/` — system fallback so host/dev runs work without
+        AGENT_TMP_DIR set.
+    """
+
+    _MAX_BYTES = 262_144  # 256 KB — covers BRDs/FRDs with generous headroom
+
+    @staticmethod
+    def _project_tmp_root() -> str:
+        raw = os.getenv("AGENT_TMP_DIR") or "/app/tmp"
+        return raw.rstrip("/") + "/"
+
+    @classmethod
+    def _sandbox_roots(cls) -> tuple[str, ...]:
+        # Project-local tmp first so it wins in the success message.
+        return (cls._project_tmp_root(), "/tmp/")
+
+    def __init__(self) -> None:
+        # Best-effort: pre-create the project-local scratch dir so agents
+        # don't have to. Swallow errors (e.g. read-only fs in some test
+        # contexts) — the per-write call still falls back gracefully.
+        try:
+            Path(self._project_tmp_root()).mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+
+    SCHEMA = {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": (
+                    "Absolute path under /app/tmp/ (preferred, project-local) "
+                    "or /tmp/. Parent directories are created automatically."
+                ),
+            },
+            "content": {
+                "type": "string",
+                "description": "UTF-8 text payload to write.",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["overwrite", "append"],
+                "description": "overwrite (default) replaces the file; append adds to it.",
+            },
+        },
+        "required": ["path", "content"],
+    }
+    DESCRIPTION = (
+        "Write a text payload to a file under the project scratch dir (/app/tmp/, "
+        "preferred) or /tmp/. Use this when you need to feed large content into "
+        "another tool (e.g. piping a long Jira description into jira_cli via "
+        "'--update-description - < /app/tmp/file'). Max 256 KB. "
+        "Returns the byte count written."
+    )
+
+    @classmethod
+    def _validate_path(cls, raw: str) -> tuple[Path | None, str | None]:
+        if not raw:
+            return None, "path is required"
+        if not raw.startswith("/"):
+            return None, "path must be absolute"
+        # Lexical normalisation (collapses '..' without following symlinks).
+        # We deliberately avoid Path.resolve() because on some systems /tmp
+        # is a symlink (e.g. macOS → /private/tmp), which would defeat the
+        # /tmp/ prefix check.
+        normalised = os.path.normpath(raw)
+        roots = cls._sandbox_roots()
+        if not any(
+            normalised == root.rstrip("/") or normalised.startswith(root)
+            for root in roots
+        ):
+            allowed = " or ".join(r.rstrip("/") for r in roots)
+            return None, f"path must be under {allowed}"
+        return Path(normalised), None
+
+    async def __call__(self, inv) -> object:
+        from copilot.tools import ToolResult
+
+        args = inv.arguments or {}
+        raw_path = args.get("path", "")
+        content = args.get("content", "")
+        mode = args.get("mode", "overwrite")
+
+        if mode not in ("overwrite", "append"):
+            return ToolResult(
+                text_result_for_llm=f"[Error: mode must be 'overwrite' or 'append', got '{mode}']",
+                result_type="failure",
+            )
+
+        path, err = self._validate_path(raw_path)
+        if err is not None:
+            return ToolResult(text_result_for_llm=f"[Error: {err}]", result_type="failure")
+
+        encoded = content.encode("utf-8")
+        if len(encoded) > self._MAX_BYTES:
+            return ToolResult(
+                text_result_for_llm=(
+                    f"[Error: content exceeds {self._MAX_BYTES}-byte limit "
+                    f"({len(encoded)} bytes). Split into smaller chunks using mode=append.]"
+                ),
+                result_type="failure",
+            )
+
+        print(f"\n\033[36m[Tool: write_file]\033[0m {path} ({len(encoded)} bytes, {mode})", flush=True)
+
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            flag = "ab" if mode == "append" else "wb"
+            with open(path, flag) as fh:
+                fh.write(encoded)
+        except OSError as exc:
+            return ToolResult(
+                text_result_for_llm=f"[Error writing {path}: {exc}]",
+                result_type="failure",
+            )
+
+        verb = "Appended" if mode == "append" else "Wrote"
+        return ToolResult(text_result_for_llm=f"{verb} {len(encoded)} bytes to {path}")
+
+
+# ---------------------------------------------------------------------------
 # AgentRunner — owns one agentic loop
 # ---------------------------------------------------------------------------
 
@@ -401,6 +539,7 @@ class AgentRunner:
             checkpoint_handler=checkpoint_handler,
             healer=self._healer,
         )
+        self._write_file_tool = WriteFileTool()
         self._finished: bool = False
 
     _INVOKE_AGENT_SCHEMA = {
@@ -670,6 +809,13 @@ class AgentRunner:
                 skip_permission=True,
             ),
             Tool(
+                name="write_file",
+                description=WriteFileTool.DESCRIPTION,
+                parameters=WriteFileTool.SCHEMA,
+                handler=self._write_file_tool,
+                skip_permission=True,
+            ),
+            Tool(
                 name="invoke_agent",
                 description=(
                     "Delegate a sub-task to a specialised sub-agent defined by an agent file. "
@@ -927,7 +1073,8 @@ class AgentRunner:
             base_dir=cfg.base_dir,
             allowed_tools=sub_allowed_tools,
         )
-        result = await AgentRunner(
+        from runner_factory import make_runner
+        result = await make_runner(
             sub_config, checkpoint_handler=self._checkpoint_handler
         ).run(instruction, extra_context=context, on_bash_result=self._bash_tool.on_bash_result)
         print(f"\033[35m[Sub-agent: {agent_file} complete]\033[0m\n", flush=True)
@@ -977,8 +1124,9 @@ class CLI:
             sys.exit(1)
 
     async def run_once(self, config: AgentConfig, instruction: str) -> None:
+        from runner_factory import make_runner
         try:
-            await AgentRunner(config).run(instruction)
+            await make_runner(config).run(instruction)
         except KeyboardInterrupt:
             print("\nInterrupted.", file=sys.stderr)
             raise

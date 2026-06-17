@@ -61,9 +61,12 @@ COPY jira-cli/jira_cli.py /jira-cli/jira_cli.py
 
 # Make agent/skill/team directories writable so appuser can save edits
 # and create the versions archive directory at build time.
+# /app/tmp is the project-local scratch dir used by the write_file tool
+# (large agent payloads piped into jira_cli, etc.) — pre-created here so
+# appuser owns it.
 RUN chown -R appuser:appuser /app/agents /app/skills /app/teams && \
-    mkdir -p /app/agents/versions && \
-    chown appuser:appuser /app/agents/versions
+    mkdir -p /app/agents/versions /app/tmp && \
+    chown appuser:appuser /app/agents/versions /app/tmp
 
 # Drop privileges
 USER appuser
