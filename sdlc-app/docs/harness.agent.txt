@@ -1,0 +1,15 @@
+
+
+- read the code from github repo
+- split the environment
+    - setup the database if it is required
+    - setup API services if it is required and install the related software dependency
+    - set up UI    
+- create the test cases
+- set up the testing data
+- create the playwright
+
+
+flow:
+- trigger by code merge
+- notices the autonmous agent (orchestration)

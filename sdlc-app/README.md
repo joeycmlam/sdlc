@@ -92,6 +92,7 @@ gh extension install github/gh-copilot
 gh auth login
 
 # Start Redis (required for /sessions/* endpoints)
+colima start
 docker run -d --name redis -p 6379:6379 redis:7-alpine
 
 # Start the Arq worker pool (required for /sessions/* endpoints)
