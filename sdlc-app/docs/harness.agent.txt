@@ -12,4 +12,14 @@
 
 flow:
 - trigger by code merge
-- notices the autonmous agent (orchestration)
+- agents build the infrastuctures
+- option: ask human review
+- agents build the test cases, 
+- option: ask human review
+- aegnts build the automated testing, generate the results
+- agents review the results and provide the feedback
+- final: once everything completed, notiffy human to have the final review
+
+
+consideration:
+- if run too long, notice human

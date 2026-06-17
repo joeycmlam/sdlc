@@ -18,6 +18,8 @@ COPY copilot-agent/session_store.py ./
 COPY copilot-agent/event_bus.py ./
 COPY copilot-agent/registry.py ./
 COPY copilot-agent/worker.py ./
+COPY copilot-agent/llm_factory.py ./
+COPY copilot-agent/graph_runner.py ./
 COPY copilot-agent/agents/ ./agents/
 COPY copilot-agent/skills/ ./skills/
 COPY copilot-agent/teams/ ./teams/
