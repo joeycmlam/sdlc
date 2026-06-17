@@ -4,7 +4,7 @@ jira-cli — Read and write Jira issues as structured Markdown.
 
 Fetches the issue summary, description, comments, and all attached documents
 (text, PDF, Word) and outputs a single clean structured document.
-Can also update the issue description and add comments.
+Can also update the issue description and add comments, or create new issues.
 
 Usage (read):
   python jira_cli.py PROJECT-123
@@ -20,6 +20,16 @@ Usage (write):
   python jira_cli.py PROJECT-123 --attach-file path/to/file.feature  # upload a file as an attachment
   python jira_cli.py PROJECT-123 --list-transitions          # show available workflow transitions
   python jira_cli.py PROJECT-123 --transition "In Progress"  # move issue to a new status by name or ID
+
+Usage (create):
+  python jira_cli.py --create-issue --project PROJ --summary "Short title"
+  python jira_cli.py --create-issue --project PROJ --summary "Short title" --issue-type Story --priority High
+  python jira_cli.py --create-issue --project PROJ --summary "Short title" --description "Full description"
+  python jira_cli.py --create-issue --project PROJ --summary "Short title" --assignee user@example.com
+  python jira_cli.py --create-issue --project PROJ --summary "Short title" --labels "label1,label2" --fix-version "1.0"
+
+Usage (utility):
+  python jira_cli.py --list-projects                         # list all accessible projects
 
 Required environment variables (or .env file):
   JIRA_URL        — Jira base URL, e.g. https://yourorg.atlassian.net
@@ -276,6 +286,65 @@ def transition_issue(jira: JIRA, issue_key: str, transition_name_or_id: str) -> 
         sys.exit(1)
 
 
+def list_projects(jira: JIRA) -> None:
+    """Print all accessible Jira projects (key and name) to stdout."""
+    try:
+        projects = jira.projects()
+    except JIRAError as exc:
+        console.print(f"[red]Error fetching projects:[/red] {exc.text}", highlight=False)
+        sys.exit(1)
+
+    lines = [
+        "## Accessible Jira Projects",
+        "",
+        "| Key | Name |",
+        "|---|---|",
+    ]
+    for p in sorted(projects, key=lambda x: x.key):
+        lines.append(f"| {p.key} | {p.name} |")
+    lines.append("")
+    sys.stdout.write("\n".join(lines) + "\n")
+
+
+def create_issue(
+    jira: JIRA,
+    project: str,
+    summary: str,
+    description: str = "",
+    issue_type: str = "Story",
+    priority: str = "Medium",
+    assignee: Optional[str] = None,
+    labels: Optional[list[str]] = None,
+    fix_version: Optional[str] = None,
+) -> None:
+    """Create a new Jira issue and print the created issue key to stdout."""
+    fields: dict = {
+        "project": {"key": project.upper()},
+        "summary": summary,
+        "issuetype": {"name": issue_type},
+        "priority": {"name": priority},
+    }
+    if description:
+        fields["description"] = description
+    if assignee:
+        # Jira Cloud uses accountId; accept email as displayName search fallback
+        fields["assignee"] = {"name": assignee}
+    if labels:
+        fields["labels"] = labels
+    if fix_version:
+        fields["fixVersions"] = [{"name": fix_version}]
+
+    try:
+        issue = jira.create_issue(fields=fields)
+    except JIRAError as exc:
+        console.print(f"[red]Error creating issue:[/red] {exc.text}", highlight=False)
+        sys.exit(1)
+
+    console.print(f"[green]Created[/green] {issue.key}: {summary}")
+    # Print the key to stdout so bash_exec callers can capture it
+    sys.stdout.write(f"{issue.key}\n")
+
+
 # ---------------------------------------------------------------------------
 # Main formatter
 # ---------------------------------------------------------------------------
@@ -432,7 +501,7 @@ def format_issue(jira: JIRA, issue_key: str, include_attachments: bool = True, c
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="jira-cli",
-        description="Fetch a Jira issue (description, comments, attachments) and output a structured Markdown document.",
+        description="Fetch, write, or create Jira issues as structured Markdown.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             Examples (read):
@@ -450,9 +519,17 @@ def main() -> None:
               python jira_cli.py PROJECT-123 --list-transitions
               python jira_cli.py PROJECT-123 --transition "In Progress"
               python jira_cli.py PROJECT-123 --transition 31
+
+            Examples (create):
+              python jira_cli.py --create-issue --project PROJ --summary "New feature"
+              python jira_cli.py --create-issue --project PROJ --summary "Fix bug" --issue-type Bug --priority High
+              python jira_cli.py --create-issue --project PROJ --summary "Epic title" --issue-type Epic --description "..."
+
+            Examples (utility):
+              python jira_cli.py --list-projects
         """),
     )
-    parser.add_argument("issue_key", help="Jira issue key, e.g. PROJECT-123")
+    parser.add_argument("issue_key", nargs="?", default=None, help="Jira issue key, e.g. PROJECT-123 (omit when using --create-issue or --list-projects)")
     parser.add_argument(
         "-o", "--output",
         metavar="FILE",
@@ -501,6 +578,59 @@ def main() -> None:
         default=".env",
         help="Path to .env file (default: .env)",
     )
+    # ── Create-issue flags ───────────────────────────────────────────────────
+    parser.add_argument(
+        "--create-issue",
+        action="store_true",
+        help="Create a new Jira issue (requires --project and --summary).",
+    )
+    parser.add_argument(
+        "--list-projects",
+        action="store_true",
+        help="List all accessible Jira projects and exit.",
+    )
+    parser.add_argument(
+        "--project",
+        metavar="KEY",
+        help="Project key for the new issue (used with --create-issue).",
+    )
+    parser.add_argument(
+        "--summary",
+        metavar="TEXT",
+        help="Summary (title) for the new issue (used with --create-issue).",
+    )
+    parser.add_argument(
+        "--description",
+        metavar="TEXT",
+        help="Description body for the new issue. Use '-' to read from stdin.",
+    )
+    parser.add_argument(
+        "--issue-type",
+        metavar="TYPE",
+        default="Story",
+        help="Issue type for the new issue (default: Story).",
+    )
+    parser.add_argument(
+        "--priority",
+        metavar="LEVEL",
+        default="Medium",
+        help="Priority for the new issue (default: Medium).",
+    )
+    parser.add_argument(
+        "--assignee",
+        metavar="USER",
+        help="Assignee username or email for the new issue.",
+    )
+    parser.add_argument(
+        "--labels",
+        metavar="LABEL1,LABEL2",
+        help="Comma-separated labels for the new issue.",
+    )
+    parser.add_argument(
+        "--fix-version",
+        metavar="VERSION",
+        help="Fix version name for the new issue.",
+    )
 
     args = parser.parse_args()
 
@@ -510,6 +640,44 @@ def main() -> None:
         load_dotenv(env_path, override=True)
 
     jira = get_jira_client()
+
+    # ── Utility: list projects ────────────────────────────────────────────────
+    if args.list_projects:
+        list_projects(jira)
+        return
+
+    # ── Create issue ─────────────────────────────────────────────────────────
+    if args.create_issue:
+        if not args.project or not args.summary:
+            console.print(
+                "[red]Error:[/red] --create-issue requires both --project and --summary.",
+                highlight=False,
+            )
+            sys.exit(1)
+        parsed_labels = [l.strip() for l in args.labels.split(",") if l.strip()] if args.labels else None
+        parsed_description = _read_text_arg(args.description) if args.description else ""
+        create_issue(
+            jira,
+            project=args.project,
+            summary=args.summary,
+            description=parsed_description,
+            issue_type=args.issue_type,
+            priority=args.priority,
+            assignee=args.assignee,
+            labels=parsed_labels,
+            fix_version=args.fix_version,
+        )
+        return
+
+    # issue_key is required for all remaining operations
+    if not args.issue_key:
+        console.print(
+            "[red]Error:[/red] Provide a Jira issue key (e.g. PROJECT-123), "
+            "or use --create-issue / --list-projects.",
+            highlight=False,
+        )
+        sys.exit(1)
+
     # Accept full Jira URLs (e.g. https://org.atlassian.net/browse/PROJ-123) or bare keys
     import re as _re
     _m = _re.search(r"/browse/([A-Za-z]+-\d+)", args.issue_key)

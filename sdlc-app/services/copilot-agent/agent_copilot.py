@@ -112,7 +112,7 @@ CheckpointHandler = Callable[[str, dict, str], Awaitable[Any]]
 # regex intentionally matches the long-form flags used by ba.agent.md so the
 # gate fires before any of them runs.
 _JIRA_WRITE_RE = re.compile(
-    r"jira_cli\.py\b[^&;|]*?--(?:update-description|add-comment|transition|create)\b",
+    r"jira_cli\.py\b[^&;|]*?--(?:update-description|add-comment|transition|create-issue|create)\b",
     re.IGNORECASE | re.DOTALL,
 )
 
