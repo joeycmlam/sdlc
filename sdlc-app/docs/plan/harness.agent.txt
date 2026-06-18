@@ -1,0 +1,25 @@
+
+
+- read the code from github repo
+- split the environment
+    - setup the database if it is required
+    - setup API services if it is required and install the related software dependency
+    - set up UI    
+- create the test cases
+- set up the testing data
+- create the playwright
+
+
+flow:
+- trigger by code merge
+- agents build the infrastuctures
+- option: ask human review
+- agents build the test cases, 
+- option: ask human review
+- aegnts build the automated testing, generate the results
+- agents review the results and provide the feedback
+- final: once everything completed, notiffy human to have the final review
+
+
+consideration:
+- if run too long, notice human

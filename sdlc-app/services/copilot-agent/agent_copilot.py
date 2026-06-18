@@ -33,6 +33,7 @@ import argparse
 import asyncio
 import os
 import re
+import secrets
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -48,6 +49,7 @@ from healer import (
     is_transient_status,
     run_with_retry,
 )
+from payload_store import PayloadStore
 
 # Auth mode resolution (evaluated once at import time):
 #   PAT mode  — GH_TOKEN or GITHUB_TOKEN is set in the environment.
@@ -60,8 +62,10 @@ from healer import (
 # still read _GITHUB_PAT, while the Copilot CLI subprocess never sees
 # GITHUB_TOKEN in its environment (which would break the OAuth handshake).
 _here = Path(__file__).parent
-load_dotenv(_here / ".env")
-load_dotenv(_here.parent / "jira-cli" / ".env")
+# Repo-root .env first (lowest precedence), then service-local files override.
+load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
+load_dotenv(_here / ".env", override=True)
+load_dotenv(_here.parent / "jira-cli" / ".env", override=True)
 
 _GITHUB_PAT: str | None = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
 
@@ -87,6 +91,30 @@ def _make_copilot_client():
 MAX_TURNS_DEFAULT = 20
 MAX_TURNS_LIMIT = 50
 SUB_AGENT_MAX_TURNS = 10
+
+
+def _safe_call(fn: Callable, *args) -> None:
+    """Invoke a callback with positional args, trimming extras for callbacks
+    declared with a shorter signature. Older callers (e.g. the /stream HTTP
+    endpoint) pass ``on_tool(name)`` rather than the richer
+    ``on_tool(name, tool_call_id)`` — we slice the args list to match so we
+    don't have to update every callsite in lockstep.
+    """
+    import inspect
+
+    try:
+        params = inspect.signature(fn).parameters
+        positional = [
+            p
+            for p in params.values()
+            if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.POSITIONAL_ONLY)
+        ]
+        has_var = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params.values())
+        n = len(args) if has_var else min(len(args), len(positional))
+    except (TypeError, ValueError):
+        # Builtins or C-level callables — signature() can fail; just pass everything.
+        n = len(args)
+    fn(*args[:n])
 MAX_RECURSION_DEPTH = 2
 
 # Maps frontmatter `tools` tags to the actual tool names registered by AgentRunner.
@@ -95,7 +123,7 @@ MAX_RECURSION_DEPTH = 2
 _TOOL_TAG_MAP: dict[str, list[str]] = {
     "read": [],                           # receive & analyse context; no active tools
     "search": ["read_confluence"],
-    "execute": ["bash_exec"],
+    "execute": ["bash_exec", "stage_payload"],
     "agent": ["invoke_agent"],
     "write": ["create_github_issue"],
 }
@@ -112,7 +140,7 @@ CheckpointHandler = Callable[[str, dict, str], Awaitable[Any]]
 # regex intentionally matches the long-form flags used by ba.agent.md so the
 # gate fires before any of them runs.
 _JIRA_WRITE_RE = re.compile(
-    r"jira_cli\.py\b[^&;|]*?--(?:update-description|add-comment|transition|create)\b",
+    r"jira_cli\.py\b[^&;|]*?--(?:update-description|add-comment|transition|create-issue|create)\b",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -200,11 +228,11 @@ class WorkflowAnalyser:
             return (
                 f"Step {last_step} was completed. "
                 f"Continue with Step {last_step + 1} now, "
-                "executing all required commands via bash_exec or invoke_agent."
+                "executing all required commands via bash_exec, stage_payload, or invoke_agent."
             )
         return (
             "Please continue and complete the remaining steps, "
-            "executing all required commands via bash_exec or invoke_agent."
+            "executing all required commands via bash_exec, stage_payload, or invoke_agent."
         )
 
 
@@ -354,6 +382,144 @@ class BashTool:
 
 
 # ---------------------------------------------------------------------------
+# StagePayloadTool — Redis-backed staging that bypasses bash command-length cap
+# ---------------------------------------------------------------------------
+
+class StagePayloadTool:
+    """Stage a payload in Redis so the agent can pipe it into another tool.
+
+    Exists so agents can pass large content (BRDs, BDD scenarios, JSON
+    bodies) without encoding it into a bash command string and tripping
+    BashTool's 4 KB command cap.
+
+    Flow:
+      1. agent calls `stage_payload(name="brd", content="<full BRD>")`
+      2. tool stores it at `agent:payload:brd-<random>` in Redis with a TTL
+      3. tool returns a `payload-cat <name>-<random>` snippet
+      4. agent pipes it into the next command:
+         `payload-cat brd-<random> | jira_cli.py SCRUM-51 --update-description -`
+
+    The random per-runner suffix prevents collisions between concurrent
+    sessions (two BA agents both staging "brd"). Keys self-evict via TTL,
+    so even if the agent crashes nothing leaks to disk.
+    """
+
+    _MAX_BYTES = 262_144  # 256 KB — covers BRDs/FRDs with generous headroom
+    _NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,40}$")
+
+    SCHEMA = {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": (
+                    "Logical name for the payload (alphanumeric, underscore, "
+                    "dash; ≤40 chars). The tool appends a per-session random "
+                    "suffix; use the suffixed name returned in the result for "
+                    "the next `payload-cat` call."
+                ),
+            },
+            "content": {
+                "type": "string",
+                "description": "UTF-8 text payload to stage.",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["overwrite", "append"],
+                "description": "overwrite (default) replaces the value; append concatenates.",
+            },
+        },
+        "required": ["name", "content"],
+    }
+    DESCRIPTION = (
+        "Stage a text payload in Redis with a short TTL. Use this when "
+        "you need to feed large content into another tool — e.g. piping a "
+        "long Jira description into jira_cli: "
+        "`payload-cat <name> | jira_cli.py <ID> --update-description -`. "
+        "Returns the suffixed name to use in `payload-cat`. Max 256 KB; "
+        "exceed it by splitting across one overwrite + one or more appends."
+    )
+
+    def __init__(self, redis_url: str | None = None) -> None:
+        # Lazy Redis init — don't open a connection until the agent actually
+        # stages something. Sessions that never call stage_payload (e.g.
+        # short tickets that fit in a heredoc) pay nothing.
+        self._redis_url = redis_url
+        # Per-runner suffix isolates this session's payloads from any
+        # concurrent BA-agent run that also uses logical name "brd".
+        self._suffix = secrets.token_hex(3)
+        self._store: PayloadStore | None = None
+
+    async def _get_store(self) -> PayloadStore:
+        if self._store is None:
+            self._store = PayloadStore.from_url(self._redis_url)
+        return self._store
+
+    async def close(self) -> None:
+        if self._store is not None:
+            try:
+                await self._store.close()
+            except Exception:
+                pass
+            self._store = None
+
+    async def __call__(self, inv) -> object:
+        from copilot.tools import ToolResult
+
+        args = inv.arguments or {}
+        raw_name = args.get("name") or args.get("key") or ""
+        content = args.get("content", "")
+        mode = args.get("mode", "overwrite")
+
+        if mode not in ("overwrite", "append"):
+            return ToolResult(
+                text_result_for_llm=f"[Error: mode must be 'overwrite' or 'append', got '{mode}']",
+                result_type="failure",
+            )
+        if not self._NAME_RE.match(raw_name):
+            return ToolResult(
+                text_result_for_llm=(
+                    "[Error: name must be 1-40 chars of [A-Za-z0-9_-]; "
+                    f"got {raw_name!r}]"
+                ),
+                result_type="failure",
+            )
+
+        encoded = content.encode("utf-8")
+        if len(encoded) > self._MAX_BYTES:
+            return ToolResult(
+                text_result_for_llm=(
+                    f"[Error: content exceeds {self._MAX_BYTES}-byte limit "
+                    f"({len(encoded)} bytes). Split into smaller chunks using mode=append.]"
+                ),
+                result_type="failure",
+            )
+
+        scoped = f"{raw_name}-{self._suffix}"
+        print(
+            f"\n\033[36m[Tool: stage_payload]\033[0m {scoped} ({len(encoded)} bytes, {mode})",
+            flush=True,
+        )
+
+        try:
+            store = await self._get_store()
+            await store.stage(scoped, encoded, append=(mode == "append"))
+        except Exception as exc:
+            return ToolResult(
+                text_result_for_llm=f"[Error staging payload to Redis: {exc}]",
+                result_type="failure",
+            )
+
+        verb = "Appended" if mode == "append" else "Staged"
+        return ToolResult(
+            text_result_for_llm=(
+                f"{verb} {len(encoded)} bytes as `{scoped}`. "
+                f"Pipe with: `payload-cat {scoped} | <next-command>`"
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
 # AgentRunner — owns one agentic loop
 # ---------------------------------------------------------------------------
 
@@ -377,6 +543,7 @@ class AgentRunner:
             checkpoint_handler=checkpoint_handler,
             healer=self._healer,
         )
+        self._stage_payload_tool = StagePayloadTool()
         self._finished: bool = False
 
     _INVOKE_AGENT_SCHEMA = {
@@ -420,9 +587,11 @@ class AgentRunner:
         initial_prompt: str,
         extra_context: str = "",
         on_chunk: Callable[[str], None] | None = None,
-        on_tool: Callable[[str], None] | None = None,
+        on_tool: Callable[..., None] | None = None,
         on_bash_result: Callable[[str, str], None] | None = None,
         on_turn: Callable[[int, int], None] | None = None,
+        on_tool_args: Callable[..., None] | None = None,
+        on_tool_result: Callable[..., None] | None = None,
     ) -> str:
         from copilot import CopilotClient
         from copilot.session import PermissionHandler
@@ -458,7 +627,13 @@ class AgentRunner:
                     if on_turn is not None:
                         on_turn(turn + 1, cfg.max_turns)
                     state = TurnState()
-                    unsubscribe = session.on(self._make_event_handler(state, on_chunk=on_chunk, on_tool=on_tool))
+                    unsubscribe = session.on(self._make_event_handler(
+                        state,
+                        on_chunk=on_chunk,
+                        on_tool=on_tool,
+                        on_tool_args=on_tool_args,
+                        on_tool_result=on_tool_result,
+                    ))
 
                     try:
                         prompt = first_prompt if turn == 0 else WorkflowAnalyser.continuation_prompt(assistant_messages)
@@ -470,8 +645,11 @@ class AgentRunner:
                     if cfg.streaming and state.content and on_chunk is None:
                         print()
 
-                    last_content = state.content
+                    # Only overwrite last_content when this turn produced text.
+                    # Otherwise a tools-only final turn would wipe the agent's
+                    # narrative and leave session.result empty.
                     if state.content:
+                        last_content = state.content
                         assistant_messages.append(state.content)
 
                     turn += 1
@@ -491,16 +669,48 @@ class AgentRunner:
                     break
             finally:
                 await session.disconnect()
+                await self._stage_payload_tool.close()
 
         if turn >= cfg.max_turns:
             print("[Warning: reached maximum tool-call turns]", file=sys.stderr)
 
         return last_content
 
-    def _make_event_handler(self, state: TurnState, on_chunk=None, on_tool=None):
+    def _make_event_handler(
+        self,
+        state: TurnState,
+        on_chunk=None,
+        on_tool=None,
+        on_tool_args=None,
+        on_tool_result=None,
+    ):
         from copilot.generated.session_events import SessionEventType
 
         streaming = self._config.streaming
+        # tool_call_id → tool_name. Used by TOOL_EXECUTION_COMPLETE (which only
+        # carries the call id) to look up the name, and to dedupe duplicate
+        # `tool` events when both TOOL_USER_REQUESTED and TOOL_EXECUTION_START
+        # fire for the same client-side tool dispatch.
+        tool_call_names: dict[str, str] = {}
+        announced_tool_calls: set[str] = set()
+
+        def _announce_tool(tool_name: str, tool_call_id: str) -> None:
+            """Emit a `tool` event once per tool_call_id."""
+            if tool_call_id and tool_call_id in announced_tool_calls:
+                return
+            # Call on_tool BEFORE marking the id as announced so a callback
+            # exception (which the SDK swallows) doesn't silently suppress
+            # the subsequent TOOL_EXECUTION_START's announcement attempt.
+            if on_tool is not None:
+                _safe_call(on_tool, tool_name, tool_call_id)
+            if tool_call_id:
+                announced_tool_calls.add(tool_call_id)
+                tool_call_names[tool_call_id] = tool_name
+
+        def _emit_args(tool_name: str, tool_call_id: str, arguments) -> None:
+            if on_tool_args is None or arguments is None:
+                return
+            _safe_call(on_tool_args, tool_name, tool_call_id, arguments)
 
         def _handler(event):
             et = event.type
@@ -519,11 +729,42 @@ class AgentRunner:
                     else:
                         print(content)
                 state.content_parts.append(content)
-            elif et in (SessionEventType.TOOL_EXECUTION_START, SessionEventType.TOOL_EXECUTION_COMPLETE):
+            elif et == SessionEventType.TOOL_USER_REQUESTED:
+                # Client-side tool dispatch — Copilot fires this BEFORE
+                # TOOL_EXECUTION_START and is where the LLM's arguments live
+                # for tools the SDK routes back to our handlers (e.g.
+                # invoke_agent, bash_exec).
                 state.tool_called = True
-                if on_tool is not None and et == SessionEventType.TOOL_EXECUTION_START:
-                    tool_name = getattr(event.data, "tool_name", "") or ""
-                    on_tool(tool_name)
+                tool_name = getattr(event.data, "tool_name", "") or ""
+                tool_call_id = getattr(event.data, "tool_call_id", "") or ""
+                arguments = getattr(event.data, "arguments", None)
+                _announce_tool(tool_name, tool_call_id)
+                _emit_args(tool_name, tool_call_id, arguments)
+            elif et == SessionEventType.TOOL_EXECUTION_START:
+                state.tool_called = True
+                tool_name = getattr(event.data, "tool_name", "") or ""
+                tool_call_id = getattr(event.data, "tool_call_id", "") or ""
+                arguments = getattr(event.data, "arguments", None)
+                _announce_tool(tool_name, tool_call_id)
+                _emit_args(tool_name, tool_call_id, arguments)
+            elif et == SessionEventType.TOOL_EXECUTION_COMPLETE:
+                state.tool_called = True
+                tool_call_id = getattr(event.data, "tool_call_id", "") or ""
+                tool_name = tool_call_names.pop(tool_call_id, "") or ""
+                success = bool(getattr(event.data, "success", True))
+                result_obj = getattr(event.data, "result", None)
+                error_obj = getattr(event.data, "error", None)
+                content_text = ""
+                if result_obj is not None:
+                    content_text = (
+                        getattr(result_obj, "detailed_content", None)
+                        or getattr(result_obj, "content", "")
+                        or ""
+                    )
+                elif error_obj is not None:
+                    content_text = getattr(error_obj, "message", "") or ""
+                if on_tool_result is not None:
+                    _safe_call(on_tool_result, tool_name, tool_call_id, content_text, success)
             elif et == SessionEventType.SESSION_IDLE:
                 state.done.set()
             elif et == SessionEventType.SESSION_ERROR:
@@ -570,6 +811,13 @@ class AgentRunner:
                 description=BashTool.DESCRIPTION,
                 parameters=BashTool.SCHEMA,
                 handler=self._bash_tool,
+                skip_permission=True,
+            ),
+            Tool(
+                name="stage_payload",
+                description=StagePayloadTool.DESCRIPTION,
+                parameters=StagePayloadTool.SCHEMA,
+                handler=self._stage_payload_tool,
                 skip_permission=True,
             ),
             Tool(
@@ -830,7 +1078,8 @@ class AgentRunner:
             base_dir=cfg.base_dir,
             allowed_tools=sub_allowed_tools,
         )
-        result = await AgentRunner(
+        from runner_factory import make_runner
+        result = await make_runner(
             sub_config, checkpoint_handler=self._checkpoint_handler
         ).run(instruction, extra_context=context, on_bash_result=self._bash_tool.on_bash_result)
         print(f"\033[35m[Sub-agent: {agent_file} complete]\033[0m\n", flush=True)
@@ -880,8 +1129,9 @@ class CLI:
             sys.exit(1)
 
     async def run_once(self, config: AgentConfig, instruction: str) -> None:
+        from runner_factory import make_runner
         try:
-            await AgentRunner(config).run(instruction)
+            await make_runner(config).run(instruction)
         except KeyboardInterrupt:
             print("\nInterrupted.", file=sys.stderr)
             raise

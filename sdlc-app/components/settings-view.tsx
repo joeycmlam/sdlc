@@ -125,6 +125,22 @@ export function SettingsView() {
             }
           />
         </section>
+
+        <section className="rounded-lg border border-border bg-card/50 p-5 space-y-3">
+          <h2 className="font-medium">About</h2>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Version</span>
+            <span className="font-mono text-xs">{process.env.NEXT_PUBLIC_APP_VERSION ?? "—"}</span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Build date</span>
+            <span className="font-mono text-xs">
+              {process.env.NEXT_PUBLIC_BUILD_DATE
+                ? new Date(process.env.NEXT_PUBLIC_BUILD_DATE).toLocaleString()
+                : "—"}
+            </span>
+          </div>
+        </section>
       </div>
     </div>
   );

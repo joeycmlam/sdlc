@@ -24,6 +24,7 @@ from arq.connections import RedisSettings
 from redis import asyncio as aioredis
 
 from agent_copilot import AgentConfig, AgentRunner, _TOOL_TAG_MAP
+from runner_factory import make_runner
 from checkpoint_gate import CheckpointGate
 from event_bus import EventBus
 from healer import Healer
@@ -130,10 +131,14 @@ async def run_session_job(ctx: dict, session_id: str) -> None:
             except asyncio.QueueFull:
                 pass  # drop on backpressure rather than block the runner
 
-    def _on_tool(name: str) -> None:
+    def _on_tool(name: str, tool_call_id: str = "") -> None:
         if name:
             try:
-                publish_queue.put_nowait({"type": "tool", "name": name})
+                publish_queue.put_nowait({
+                    "type": "tool",
+                    "name": name,
+                    "tool_call_id": tool_call_id,
+                })
             except asyncio.QueueFull:
                 pass
 
@@ -143,6 +148,35 @@ async def run_session_job(ctx: dict, session_id: str) -> None:
                 "type": "bash_result",
                 "command": command,
                 "result": result_preview,
+            })
+        except asyncio.QueueFull:
+            pass
+
+    def _on_tool_args(name: str, tool_call_id: str, arguments) -> None:
+        # Arguments for ALL tools — lets the UI render a meaningful detail
+        # line even for non-bash tools (View, Report Intent, MCP tools…).
+        # arguments may be a JSON string or a dict; we forward as-is and let
+        # the frontend normalise.
+        try:
+            publish_queue.put_nowait({
+                "type": "tool_args",
+                "name": name,
+                "tool_call_id": tool_call_id,
+                "arguments": arguments,
+            })
+        except asyncio.QueueFull:
+            pass
+
+    def _on_tool_result(name: str, tool_call_id: str, content: str, success: bool) -> None:
+        # Truncate generously here; the UI also caps display height.
+        preview = (content or "")[:2000]
+        try:
+            publish_queue.put_nowait({
+                "type": "tool_result",
+                "name": name,
+                "tool_call_id": tool_call_id,
+                "result": preview,
+                "success": success,
             })
         except asyncio.QueueFull:
             pass
@@ -196,7 +230,7 @@ async def run_session_job(ctx: dict, session_id: str) -> None:
             redis=ctx["redis_pubsub"],
         )
         healer = Healer(publish=_on_heal)
-        runner = AgentRunner(config, checkpoint_handler=gate.check, healer=healer)
+        runner = make_runner(config, checkpoint_handler=gate.check, healer=healer)
 
         ctx_parts = [session.extra_context] if session.extra_context else []
         if session.jira_url:
@@ -215,6 +249,8 @@ async def run_session_job(ctx: dict, session_id: str) -> None:
                 on_tool=_on_tool,
                 on_bash_result=_on_bash_result,
                 on_turn=_on_turn,
+                on_tool_args=_on_tool_args,
+                on_tool_result=_on_tool_result,
             ),
             timeout=session.timeout_seconds or _SESSION_RUN_TIMEOUT,
         )

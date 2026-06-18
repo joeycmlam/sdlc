@@ -13,10 +13,16 @@ COPY copilot-agent/agent.py ./
 COPY copilot-agent/agent_copilot.py ./
 COPY copilot-agent/api_server.py ./
 COPY copilot-agent/checkpoint_gate.py ./
+COPY copilot-agent/healer.py ./
 COPY copilot-agent/session_store.py ./
 COPY copilot-agent/event_bus.py ./
 COPY copilot-agent/registry.py ./
 COPY copilot-agent/worker.py ./
+COPY copilot-agent/llm_factory.py ./
+COPY copilot-agent/graph_runner.py ./
+COPY copilot-agent/runner_factory.py ./
+COPY copilot-agent/payload_store.py ./
+COPY copilot-agent/payload_cat.py ./
 COPY copilot-agent/agents/ ./agents/
 COPY copilot-agent/skills/ ./skills/
 COPY copilot-agent/teams/ ./teams/

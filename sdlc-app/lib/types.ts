@@ -134,14 +134,31 @@ export interface CreateSessionParams {
 }
 
 export interface SessionEvent {
-  type: "state" | "chunk" | "tool" | "bash_result" | "turn" | "done" | "error";
+  type:
+    | "state"
+    | "chunk"
+    | "tool"
+    | "tool_args"
+    | "tool_result"
+    | "bash_result"
+    | "turn"
+    | "done"
+    | "error";
   state?: SessionState;
   content?: string;
   name?: string;
+  /** tool/tool_args/tool_result: stable id used to correlate events for the
+   * same tool invocation, even when they arrive out of order. */
+  tool_call_id?: string;
   /** bash_result: the shell command that was run */
   command?: string;
-  /** bash_result: truncated stdout/stderr output */
+  /** bash_result / tool_result: truncated output */
   result?: string;
+  /** tool_args: input arguments for any tool — may be a dict (parsed) or a
+   * raw JSON string depending on the Copilot wire format. */
+  arguments?: Record<string, unknown> | string | unknown;
+  /** tool_result: whether the tool succeeded */
+  success?: boolean;
   /** turn: current turn number (1-based) */
   n?: number;
   /** turn: configured max_turns for this session */

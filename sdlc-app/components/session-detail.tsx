@@ -31,6 +31,11 @@ export function SessionDetail({ id }: { id: string }) {
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Ref mirror of tools so callbacks can read the latest count synchronously
+  // without nested setState. Also a tool_call_id → index map so out-of-order
+  // events (and sub-agent events that omit the id) still attach correctly.
+  const toolsCountRef = useRef(0);
+  const toolIndexByIdRef = useRef<Map<string, number>>(new Map());
 
   const { data: session, mutate, error } = useSWR<Session>(
     ["session", id],
@@ -52,6 +57,8 @@ export function SessionDetail({ id }: { id: string }) {
     setToolResults({});
     setCurrentTurn(null);
     setStreamError(null);
+    toolsCountRef.current = 0;
+    toolIndexByIdRef.current = new Map();
 
     (async () => {
       try {
@@ -67,28 +74,50 @@ export function SessionDetail({ id }: { id: string }) {
       mutate();
     })();
 
+    function resolveToolIndex(toolCallId: string | undefined): number {
+      // Prefer explicit tool_call_id correlation; fall back to "most recent"
+      // for legacy events (bash_result, sub-agent leaks) that don't carry one.
+      if (toolCallId) {
+        const known = toolIndexByIdRef.current.get(toolCallId);
+        if (known != null) return known;
+      }
+      return toolsCountRef.current - 1;
+    }
+
     function handleEvent(ev: SessionEvent) {
       if (ev.type === "chunk" && ev.content) {
         setTranscript((t) => t + ev.content);
       } else if (ev.type === "tool" && ev.name) {
+        const idx = toolsCountRef.current;
+        toolsCountRef.current += 1;
+        if (ev.tool_call_id) {
+          toolIndexByIdRef.current.set(ev.tool_call_id, idx);
+        }
         setTools((prev) => [...prev, ev.name as string]);
       } else if (ev.type === "bash_result" && ev.command != null) {
-        // Attach command as detail and result to the most-recently-added tool card.
-        setToolDetails((prev) => {
-          const idx = Object.keys(prev).length;
-          // Use tools.length as the 0-based index for the matching tool entry.
-          return prev;
-        });
-        setTools((prev) => {
-          const idx = prev.length - 1;
-          if (idx >= 0) {
-            setToolDetails((d) => ({ ...d, [idx]: ev.command as string }));
-            if (ev.result) {
-              setToolResults((r) => ({ ...r, [idx]: ev.result as string }));
-            }
+        const idx = resolveToolIndex(undefined);
+        if (idx >= 0) {
+          setToolDetails((d) => ({ ...d, [idx]: `$ ${ev.command}` }));
+          if (ev.result) {
+            setToolResults((r) => ({ ...r, [idx]: ev.result as string }));
           }
-          return prev;
-        });
+        }
+      } else if (ev.type === "tool_args") {
+        // Attach args to the right card via tool_call_id (or fall back to
+        // most-recent). Don't clobber a bash_result $-prefixed command —
+        // that has richer formatting.
+        const idx = resolveToolIndex(ev.tool_call_id);
+        if (idx >= 0) {
+          const summary = summariseToolArgs(ev.name, ev.arguments);
+          if (summary) {
+            setToolDetails((d) => (d[idx] ? d : { ...d, [idx]: summary }));
+          }
+        }
+      } else if (ev.type === "tool_result") {
+        const idx = resolveToolIndex(ev.tool_call_id);
+        if (idx >= 0 && ev.result) {
+          setToolResults((r) => (r[idx] ? r : { ...r, [idx]: ev.result as string }));
+        }
       } else if (ev.type === "turn" && ev.n != null) {
         setCurrentTurn({ n: ev.n, max: ev.max_turns ?? 0 });
       } else if (ev.type === "state" || ev.type === "done") {
@@ -335,6 +364,18 @@ export function SessionDetail({ id }: { id: string }) {
             <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed">
               {session.result}
             </pre>
+          ) : TERMINAL_STATES.has(session.state) ? (
+            <div className="text-sm text-muted-foreground italic space-y-1">
+              <p>
+                Session ended in state <span className="font-mono not-italic">{session.state}</span>
+                {" "}without producing any textual output.
+              </p>
+              <p className="text-xs">
+                {tools.length > 0
+                  ? `The agent invoked ${tools.length} tool${tools.length === 1 ? "" : "s"} but never returned a final message. Open each tool card above to inspect what ran.`
+                  : "No tool calls were captured either — the model likely refused or returned an empty response. Try re-running, switching models, or sharpening the instruction."}
+              </p>
+            </div>
           ) : (
             <p className="text-sm text-muted-foreground italic">
               {session.state === "pending"
@@ -368,4 +409,57 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
       <div className={cn("text-sm break-all", mono && "font-mono text-xs")}>{value}</div>
     </div>
   );
+}
+
+// Pick the most informative one-line summary for a tool's arguments.
+// Copilot forwards arguments as either a parsed dict or a raw JSON string —
+// normalise both. Falls back to compact JSON if no single field stands out.
+function summariseToolArgs(name: string | undefined, args: unknown): string | undefined {
+  if (args == null) return undefined;
+
+  // Raw JSON string? Try to parse so we can pull priority fields.
+  if (typeof args === "string") {
+    const trimmed = args.trim();
+    if (!trimmed) return undefined;
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return summariseToolArgs(name, JSON.parse(trimmed));
+      } catch {
+        // not valid JSON — show as-is below
+      }
+    }
+    return trimmed.length > 400 ? trimmed.slice(0, 400) + "…" : trimmed;
+  }
+  if (typeof args !== "object") return String(args);
+
+  const obj = args as Record<string, unknown>;
+  // Prefer common high-signal fields when present.
+  const priorityKeys = [
+    "command",
+    "path",
+    "file_path",
+    "url",
+    "agent_file",
+    "instruction",
+    "query",
+    "summary",
+    "title",
+    "subject",
+    "intent",
+  ];
+  for (const k of priorityKeys) {
+    const v = obj[k];
+    if (typeof v === "string" && v.trim()) {
+      const value = v.length > 300 ? v.slice(0, 300) + "…" : v;
+      return name === "bash_exec" && k === "command" ? `$ ${value}` : `${k}: ${value}`;
+    }
+  }
+
+  try {
+    const json = JSON.stringify(obj);
+    if (json === "{}") return undefined;
+    return json.length > 400 ? json.slice(0, 400) + "…" : json;
+  } catch {
+    return undefined;
+  }
 }

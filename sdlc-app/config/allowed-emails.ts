@@ -4,4 +4,5 @@
  */
 export const ALLOWED_EMAILS: ReadonlySet<string> = new Set([
   "joey.cm.lam@gmail.com",
+  "jcmlamhk@gmail.com",
 ]);
