@@ -29,9 +29,10 @@ copilot-agent = "agent:main"
 agent-copilot = "agent_copilot:main"
 agent-api = "api_server:cli_main"
 agent-worker = "worker:cli_main"
+payload-cat = "payload_cat:main"
 
 [tool.setuptools]
-py-modules = ["agent", "agent_copilot", "api_server", "registry", "session_store", "event_bus", "checkpoint_gate", "worker", "llm_factory", "graph_runner", "healer", "runner_factory"]
+py-modules = ["agent", "agent_copilot", "api_server", "registry", "session_store", "event_bus", "checkpoint_gate", "worker", "llm_factory", "graph_runner", "healer", "runner_factory", "payload_store", "payload_cat"]
 include-package-data = true
 
 [tool.setuptools.data-files]

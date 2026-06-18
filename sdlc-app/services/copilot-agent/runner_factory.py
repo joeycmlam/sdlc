@@ -35,10 +35,9 @@ def _uses_graph_runner(model: str) -> bool:
 class _GraphRunnerAdapter:
     """Exposes AgentRunner's ``.run(...)`` shape on top of graph_runner.run_graph.
 
-    Tool-args / tool-result callbacks aren't surfaced by the LangGraph event
-    stream the same way the Copilot SDK surfaces them, so those callbacks are
-    accepted but ignored — chunks, tool starts, bash results, and turn ticks
-    still flow through.
+    All callbacks — chunks, tool starts, tool args, tool results, bash
+    results, turn ticks — are forwarded so the UI sees the same event
+    stream regardless of which backend handled the session.
     """
 
     def __init__(
@@ -59,8 +58,8 @@ class _GraphRunnerAdapter:
         on_tool: Optional[Callable[..., None]] = None,
         on_bash_result: Optional[Callable[[str, str], None]] = None,
         on_turn: Optional[Callable[[int, int], None]] = None,
-        on_tool_args: Optional[Callable[..., None]] = None,  # noqa: ARG002
-        on_tool_result: Optional[Callable[..., None]] = None,  # noqa: ARG002
+        on_tool_args: Optional[Callable[..., None]] = None,
+        on_tool_result: Optional[Callable[..., None]] = None,
     ) -> str:
         from graph_runner import run_graph
 
@@ -74,6 +73,8 @@ class _GraphRunnerAdapter:
             on_tool=on_tool,
             on_bash_result=on_bash_result,
             on_turn=on_turn,
+            on_tool_args=on_tool_args,
+            on_tool_result=on_tool_result,
         )
 
 

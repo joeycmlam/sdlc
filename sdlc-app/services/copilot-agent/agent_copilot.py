@@ -33,6 +33,7 @@ import argparse
 import asyncio
 import os
 import re
+import secrets
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -48,6 +49,7 @@ from healer import (
     is_transient_status,
     run_with_retry,
 )
+from payload_store import PayloadStore
 
 # Auth mode resolution (evaluated once at import time):
 #   PAT mode  — GH_TOKEN or GITHUB_TOKEN is set in the environment.
@@ -121,7 +123,7 @@ MAX_RECURSION_DEPTH = 2
 _TOOL_TAG_MAP: dict[str, list[str]] = {
     "read": [],                           # receive & analyse context; no active tools
     "search": ["read_confluence"],
-    "execute": ["bash_exec", "write_file"],
+    "execute": ["bash_exec", "stage_payload"],
     "agent": ["invoke_agent"],
     "write": ["create_github_issue"],
 }
@@ -226,11 +228,11 @@ class WorkflowAnalyser:
             return (
                 f"Step {last_step} was completed. "
                 f"Continue with Step {last_step + 1} now, "
-                "executing all required commands via bash_exec, write_file, or invoke_agent."
+                "executing all required commands via bash_exec, stage_payload, or invoke_agent."
             )
         return (
             "Please continue and complete the remaining steps, "
-            "executing all required commands via bash_exec, write_file, or invoke_agent."
+            "executing all required commands via bash_exec, stage_payload, or invoke_agent."
         )
 
 
@@ -380,101 +382,92 @@ class BashTool:
 
 
 # ---------------------------------------------------------------------------
-# WriteFileTool — payload-to-disk channel that bypasses bash command-length cap
+# StagePayloadTool — Redis-backed staging that bypasses bash command-length cap
 # ---------------------------------------------------------------------------
 
-class WriteFileTool:
-    """Write a text payload to a sandboxed path.
+class StagePayloadTool:
+    """Stage a payload in Redis so the agent can pipe it into another tool.
 
     Exists so agents can pass large content (BRDs, BDD scenarios, JSON
-    bodies) to other tools via stdin redirect (`cmd < /app/tmp/file`)
-    without encoding the payload into a bash command string and tripping
+    bodies) without encoding it into a bash command string and tripping
     BashTool's 4 KB command cap.
 
-    Two sandbox roots are accepted:
-      - the project-local scratch dir (AGENT_TMP_DIR env var, default
-        `/app/tmp/` to match the Dockerfile) — the canonical location, so
-        operators can mount or inspect it from the host.
-      - `/tmp/` — system fallback so host/dev runs work without
-        AGENT_TMP_DIR set.
+    Flow:
+      1. agent calls `stage_payload(name="brd", content="<full BRD>")`
+      2. tool stores it at `agent:payload:brd-<random>` in Redis with a TTL
+      3. tool returns a `payload-cat <name>-<random>` snippet
+      4. agent pipes it into the next command:
+         `payload-cat brd-<random> | jira_cli.py SCRUM-51 --update-description -`
+
+    The random per-runner suffix prevents collisions between concurrent
+    sessions (two BA agents both staging "brd"). Keys self-evict via TTL,
+    so even if the agent crashes nothing leaks to disk.
     """
 
     _MAX_BYTES = 262_144  # 256 KB — covers BRDs/FRDs with generous headroom
-
-    @staticmethod
-    def _project_tmp_root() -> str:
-        raw = os.getenv("AGENT_TMP_DIR") or "/app/tmp"
-        return raw.rstrip("/") + "/"
-
-    @classmethod
-    def _sandbox_roots(cls) -> tuple[str, ...]:
-        # Project-local tmp first so it wins in the success message.
-        return (cls._project_tmp_root(), "/tmp/")
-
-    def __init__(self) -> None:
-        # Best-effort: pre-create the project-local scratch dir so agents
-        # don't have to. Swallow errors (e.g. read-only fs in some test
-        # contexts) — the per-write call still falls back gracefully.
-        try:
-            Path(self._project_tmp_root()).mkdir(parents=True, exist_ok=True)
-        except OSError:
-            pass
+    _NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,40}$")
 
     SCHEMA = {
         "type": "object",
         "properties": {
-            "path": {
+            "name": {
                 "type": "string",
                 "description": (
-                    "Absolute path under /app/tmp/ (preferred, project-local) "
-                    "or /tmp/. Parent directories are created automatically."
+                    "Logical name for the payload (alphanumeric, underscore, "
+                    "dash; ≤40 chars). The tool appends a per-session random "
+                    "suffix; use the suffixed name returned in the result for "
+                    "the next `payload-cat` call."
                 ),
             },
             "content": {
                 "type": "string",
-                "description": "UTF-8 text payload to write.",
+                "description": "UTF-8 text payload to stage.",
             },
             "mode": {
                 "type": "string",
                 "enum": ["overwrite", "append"],
-                "description": "overwrite (default) replaces the file; append adds to it.",
+                "description": "overwrite (default) replaces the value; append concatenates.",
             },
         },
-        "required": ["path", "content"],
+        "required": ["name", "content"],
     }
     DESCRIPTION = (
-        "Write a text payload to a file under the project scratch dir (/app/tmp/, "
-        "preferred) or /tmp/. Use this when you need to feed large content into "
-        "another tool (e.g. piping a long Jira description into jira_cli via "
-        "'--update-description - < /app/tmp/file'). Max 256 KB. "
-        "Returns the byte count written."
+        "Stage a text payload in Redis with a short TTL. Use this when "
+        "you need to feed large content into another tool — e.g. piping a "
+        "long Jira description into jira_cli: "
+        "`payload-cat <name> | jira_cli.py <ID> --update-description -`. "
+        "Returns the suffixed name to use in `payload-cat`. Max 256 KB; "
+        "exceed it by splitting across one overwrite + one or more appends."
     )
 
-    @classmethod
-    def _validate_path(cls, raw: str) -> tuple[Path | None, str | None]:
-        if not raw:
-            return None, "path is required"
-        if not raw.startswith("/"):
-            return None, "path must be absolute"
-        # Lexical normalisation (collapses '..' without following symlinks).
-        # We deliberately avoid Path.resolve() because on some systems /tmp
-        # is a symlink (e.g. macOS → /private/tmp), which would defeat the
-        # /tmp/ prefix check.
-        normalised = os.path.normpath(raw)
-        roots = cls._sandbox_roots()
-        if not any(
-            normalised == root.rstrip("/") or normalised.startswith(root)
-            for root in roots
-        ):
-            allowed = " or ".join(r.rstrip("/") for r in roots)
-            return None, f"path must be under {allowed}"
-        return Path(normalised), None
+    def __init__(self, redis_url: str | None = None) -> None:
+        # Lazy Redis init — don't open a connection until the agent actually
+        # stages something. Sessions that never call stage_payload (e.g.
+        # short tickets that fit in a heredoc) pay nothing.
+        self._redis_url = redis_url
+        # Per-runner suffix isolates this session's payloads from any
+        # concurrent BA-agent run that also uses logical name "brd".
+        self._suffix = secrets.token_hex(3)
+        self._store: PayloadStore | None = None
+
+    async def _get_store(self) -> PayloadStore:
+        if self._store is None:
+            self._store = PayloadStore.from_url(self._redis_url)
+        return self._store
+
+    async def close(self) -> None:
+        if self._store is not None:
+            try:
+                await self._store.close()
+            except Exception:
+                pass
+            self._store = None
 
     async def __call__(self, inv) -> object:
         from copilot.tools import ToolResult
 
         args = inv.arguments or {}
-        raw_path = args.get("path", "")
+        raw_name = args.get("name") or args.get("key") or ""
         content = args.get("content", "")
         mode = args.get("mode", "overwrite")
 
@@ -483,10 +476,14 @@ class WriteFileTool:
                 text_result_for_llm=f"[Error: mode must be 'overwrite' or 'append', got '{mode}']",
                 result_type="failure",
             )
-
-        path, err = self._validate_path(raw_path)
-        if err is not None:
-            return ToolResult(text_result_for_llm=f"[Error: {err}]", result_type="failure")
+        if not self._NAME_RE.match(raw_name):
+            return ToolResult(
+                text_result_for_llm=(
+                    "[Error: name must be 1-40 chars of [A-Za-z0-9_-]; "
+                    f"got {raw_name!r}]"
+                ),
+                result_type="failure",
+            )
 
         encoded = content.encode("utf-8")
         if len(encoded) > self._MAX_BYTES:
@@ -498,21 +495,28 @@ class WriteFileTool:
                 result_type="failure",
             )
 
-        print(f"\n\033[36m[Tool: write_file]\033[0m {path} ({len(encoded)} bytes, {mode})", flush=True)
+        scoped = f"{raw_name}-{self._suffix}"
+        print(
+            f"\n\033[36m[Tool: stage_payload]\033[0m {scoped} ({len(encoded)} bytes, {mode})",
+            flush=True,
+        )
 
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            flag = "ab" if mode == "append" else "wb"
-            with open(path, flag) as fh:
-                fh.write(encoded)
-        except OSError as exc:
+            store = await self._get_store()
+            await store.stage(scoped, encoded, append=(mode == "append"))
+        except Exception as exc:
             return ToolResult(
-                text_result_for_llm=f"[Error writing {path}: {exc}]",
+                text_result_for_llm=f"[Error staging payload to Redis: {exc}]",
                 result_type="failure",
             )
 
-        verb = "Appended" if mode == "append" else "Wrote"
-        return ToolResult(text_result_for_llm=f"{verb} {len(encoded)} bytes to {path}")
+        verb = "Appended" if mode == "append" else "Staged"
+        return ToolResult(
+            text_result_for_llm=(
+                f"{verb} {len(encoded)} bytes as `{scoped}`. "
+                f"Pipe with: `payload-cat {scoped} | <next-command>`"
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +543,7 @@ class AgentRunner:
             checkpoint_handler=checkpoint_handler,
             healer=self._healer,
         )
-        self._write_file_tool = WriteFileTool()
+        self._stage_payload_tool = StagePayloadTool()
         self._finished: bool = False
 
     _INVOKE_AGENT_SCHEMA = {
@@ -665,6 +669,7 @@ class AgentRunner:
                     break
             finally:
                 await session.disconnect()
+                await self._stage_payload_tool.close()
 
         if turn >= cfg.max_turns:
             print("[Warning: reached maximum tool-call turns]", file=sys.stderr)
@@ -809,10 +814,10 @@ class AgentRunner:
                 skip_permission=True,
             ),
             Tool(
-                name="write_file",
-                description=WriteFileTool.DESCRIPTION,
-                parameters=WriteFileTool.SCHEMA,
-                handler=self._write_file_tool,
+                name="stage_payload",
+                description=StagePayloadTool.DESCRIPTION,
+                parameters=StagePayloadTool.SCHEMA,
+                handler=self._stage_payload_tool,
                 skip_permission=True,
             ),
             Tool(

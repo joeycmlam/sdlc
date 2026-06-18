@@ -30,6 +30,7 @@ from agent_copilot import (
     AgentConfig,
     BashTool,
     CheckpointHandler,
+    StagePayloadTool,
     _TOOL_TAG_MAP,
 )
 from healer import (
@@ -48,6 +49,11 @@ from llm_factory import build_llm
 
 class _BashInput(BaseModel):
     command: str
+
+class _StagePayloadInput(BaseModel):
+    name: str
+    content: str
+    mode: str = "overwrite"
 
 class _InvokeAgentInput(BaseModel):
     agent_file: str
@@ -78,15 +84,19 @@ def build_lc_tools(
     checkpoint_handler: CheckpointHandler | None = None,
     healer: Healer | None = None,
     on_bash_result: Callable[[str, str], None] | None = None,
-) -> list[StructuredTool]:
+) -> tuple[list[StructuredTool], Callable[[], Any]]:
     """Build LangChain StructuredTool instances from an AgentConfig.
 
     Reuses BashTool's validation, blocklist, and healer logic. Return types
     are plain strings (not Copilot SDK ToolResult) for LangGraph compatibility.
+
+    Returns ``(tools, cleanup)`` — the caller MUST await ``cleanup()`` after
+    the graph run finishes so the StagePayloadTool's Redis pool is closed.
     """
     _healer = healer or Healer()
     _bash_impl = BashTool(checkpoint_handler=checkpoint_handler, healer=_healer)
     _bash_impl.on_bash_result = on_bash_result
+    _stage_impl = StagePayloadTool()
 
     # ----- bash_exec --------------------------------------------------------
 
@@ -95,6 +105,15 @@ def build_lc_tools(
         class _Inv:
             arguments = {"command": command}
         result = await _bash_impl(_Inv())
+        return getattr(result, "text_result_for_llm", str(result))
+
+    # ----- stage_payload ----------------------------------------------------
+
+    async def stage_payload(name: str, content: str, mode: str = "overwrite") -> str:
+        """Stage a text payload in Redis for piping via ``payload-cat``."""
+        class _Inv:
+            arguments = {"name": name, "content": content, "mode": mode}
+        result = await _stage_impl(_Inv())
         return getattr(result, "text_result_for_llm", str(result))
 
     # ----- invoke_agent (bridges to AgentRunner; Phase 5 will replace with subgraph) -----
@@ -266,6 +285,12 @@ def build_lc_tools(
             args_schema=_BashInput,
         ),
         StructuredTool.from_function(
+            name="stage_payload",
+            description=StagePayloadTool.DESCRIPTION,
+            coroutine=stage_payload,
+            args_schema=_StagePayloadInput,
+        ),
+        StructuredTool.from_function(
             name="invoke_agent",
             description=(
                 "Delegate a sub-task to a specialised sub-agent defined by an agent file. "
@@ -306,11 +331,16 @@ def build_lc_tools(
         ),
     ]
 
+    async def _cleanup() -> None:
+        await _stage_impl.close()
+
     allowed = config.allowed_tools
     if allowed is None:
-        return all_tools
+        return all_tools, _cleanup
     # Always include `finish` so the agent can signal completion.
-    return [t for t in all_tools if t.name == "finish" or t.name in allowed]
+    return [
+        t for t in all_tools if t.name == "finish" or t.name in allowed
+    ], _cleanup
 
 
 # ---------------------------------------------------------------------------
@@ -334,27 +364,25 @@ def build_agent_graph(
         on_bash_result:     Callback(command, result_preview) streamed to EventBus.
 
     Returns:
-        A compiled CompiledGraph. Invoke via::
-
-            result = await graph.ainvoke(
-                {"messages": [HumanMessage(content=prompt)]},
-                config={"configurable": {"thread_id": session_id},
-                        "recursion_limit": config.max_turns * 2 + 2},
-            )
+        ``(graph, cleanup)`` — the compiled CompiledGraph plus an async
+        cleanup callable. Callers MUST ``await cleanup()`` once the run
+        finishes (success or failure) so the StagePayloadTool's Redis
+        pool is released.
     """
-    tools = build_lc_tools(
+    tools, cleanup = build_lc_tools(
         config,
         checkpoint_handler=checkpoint_handler,
         healer=healer,
         on_bash_result=on_bash_result,
     )
     llm = build_llm(config.model)
-    return create_react_agent(
+    graph = create_react_agent(
         model=llm,
         tools=tools,
         prompt=config.system_prompt,
         checkpointer=checkpointer,
     )
+    return graph, cleanup
 
 
 # ---------------------------------------------------------------------------
@@ -370,16 +398,18 @@ async def run_graph(
     checkpoint_handler: CheckpointHandler | None = None,
     healer: Healer | None = None,
     on_chunk: Callable[[str], None] | None = None,
-    on_tool: Callable[[str], None] | None = None,
+    on_tool: Callable[..., None] | None = None,
     on_bash_result: Callable[[str, str], None] | None = None,
     on_turn: Callable[[int, int], None] | None = None,
+    on_tool_args: Callable[..., None] | None = None,
+    on_tool_result: Callable[..., None] | None = None,
 ) -> str:
     """Run an agent graph to completion and return the final text output.
 
     Drop-in async replacement for AgentRunner.run(). Streams chunks and tool
     events via the provided callbacks (same contract as AgentRunner).
     """
-    graph = build_agent_graph(
+    graph, cleanup = build_agent_graph(
         config,
         checkpointer=checkpointer,
         checkpoint_handler=checkpoint_handler,
@@ -398,42 +428,68 @@ async def run_graph(
     last_ai_content = ""
     turn = 0
 
-    async for event in graph.astream_events(
-        {"messages": [HumanMessage(content=user_message)]},
-        config=run_config,
-        version="v2",
-    ):
-        kind = event.get("event", "")
-        data = event.get("data", {})
+    try:
+        async for event in graph.astream_events(
+            {"messages": [HumanMessage(content=user_message)]},
+            config=run_config,
+            version="v2",
+        ):
+            kind = event.get("event", "")
+            data = event.get("data", {})
 
-        if kind == "on_chat_model_stream":
-            chunk = data.get("chunk")
-            if chunk and hasattr(chunk, "content") and chunk.content:
-                if on_chunk is not None:
-                    on_chunk(chunk.content)
+            if kind == "on_chat_model_stream":
+                chunk = data.get("chunk")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    if on_chunk is not None:
+                        on_chunk(chunk.content)
 
-        elif kind == "on_tool_start":
-            tool_name = event.get("name", "")
-            if on_tool is not None:
-                on_tool(tool_name)
+            elif kind == "on_tool_start":
+                tool_name = event.get("name", "") or ""
+                tool_call_id = str(event.get("run_id") or "")
+                if on_tool is not None:
+                    on_tool(tool_name, tool_call_id)
+                if on_tool_args is not None:
+                    arguments = data.get("input")
+                    if arguments is not None:
+                        on_tool_args(tool_name, tool_call_id, arguments)
 
-        elif kind == "on_chain_end" and event.get("name") == "LangGraph":
-            output = data.get("output", {})
-            messages = output.get("messages", [])
-            for msg in reversed(messages):
-                if isinstance(msg, AIMessage) and msg.content:
-                    last_ai_content = (
-                        msg.content if isinstance(msg.content, str)
-                        else " ".join(
-                            p.get("text", "") for p in msg.content
-                            if isinstance(p, dict)
+            elif kind == "on_tool_end":
+                tool_name = event.get("name", "") or ""
+                tool_call_id = str(event.get("run_id") or "")
+                output = data.get("output")
+                # LangGraph wraps tool returns in a ToolMessage; fall back to
+                # str() so dict / primitive returns still surface something.
+                if hasattr(output, "content"):
+                    content_text = output.content or ""
+                elif isinstance(output, str):
+                    content_text = output
+                elif output is None:
+                    content_text = ""
+                else:
+                    content_text = str(output)
+                success = getattr(output, "status", "success") != "error"
+                if on_tool_result is not None:
+                    on_tool_result(tool_name, tool_call_id, content_text, success)
+
+            elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                output = data.get("output", {})
+                messages = output.get("messages", [])
+                for msg in reversed(messages):
+                    if isinstance(msg, AIMessage) and msg.content:
+                        last_ai_content = (
+                            msg.content if isinstance(msg.content, str)
+                            else " ".join(
+                                p.get("text", "") for p in msg.content
+                                if isinstance(p, dict)
+                            )
                         )
-                    )
-                    break
+                        break
 
-        elif kind == "on_chain_start" and event.get("name") == "agent":
-            turn += 1
-            if on_turn is not None:
-                on_turn(turn, config.max_turns)
+            elif kind == "on_chain_start" and event.get("name") == "agent":
+                turn += 1
+                if on_turn is not None:
+                    on_turn(turn, config.max_turns)
+    finally:
+        await cleanup()
 
     return last_ai_content

@@ -37,7 +37,7 @@ Always activate a delegate by calling the `invoke_agent` tool with the `agent_fi
 
 ## Workflow
 
-> **Execution rule**: Execute each step immediately via `bash_exec`, `write_file`, or `invoke_agent` tool calls. Do NOT narrate or describe a step before executing it — act directly. Sub-tasks must always be delegated via `invoke_agent`; never generate sub-agent output inline. For payloads longer than ~3 KB (full BRDs, long Jira comments, multi-section descriptions), ALWAYS stage them with `write_file` and pipe via stdin redirect — never inline them in a heredoc, which will exceed the bash command-length cap.
+> **Execution rule**: Execute each step immediately via `bash_exec`, `stage_payload`, or `invoke_agent` tool calls. Do NOT narrate or describe a step before executing it — act directly. Sub-tasks must always be delegated via `invoke_agent`; never generate sub-agent output inline. For payloads longer than ~3 KB (full BRDs, long Jira comments, multi-section descriptions), ALWAYS stage them with `stage_payload` and pipe via `payload-cat` — never inline them in a heredoc, which will exceed the bash command-length cap.
 
 ### Step 0a — Intent Detection *(always first)*
 
@@ -260,42 +260,42 @@ List every ambiguity, missing piece, or assumption that requires business confir
 
 > **DEFAULT — always perform this step** unless the user explicitly says "do not update Jira" or "preview only". If the CLI fails, output the full enriched text for manual copy-paste and say so clearly.
 
-Write the complete requirements back to the Jira ticket using the write commands below. All commands use `/jira-cli/jira_cli.py` (absolute container path).
+Write the complete requirements back to the Jira ticket using the staging flow below. All shell commands use `/jira-cli/jira_cli.py` (absolute container path).
 
-> **Heredoc cap**: `bash_exec` rejects commands longer than 4 KB, so a full BRD will NOT fit inside a heredoc. ALWAYS stage long payloads via the `write_file` tool first, then pipe the file into `jira_cli.py` via stdin redirect. Do NOT attempt to chunk the payload through multiple `python -c "open(...).write(...)"` invocations — that pattern burned the turn budget on previous runs and left tickets un-updated.
+> **Heredoc cap**: `bash_exec` rejects commands longer than 4 KB, so a full BRD will NOT fit inside a heredoc. ALWAYS stage long payloads via the `stage_payload` tool, which writes to ephemeral Redis storage (no disk), then pipe via `payload-cat`. Do NOT attempt to chunk the payload through multiple `python -c "open(...).write(...)"` invocations — that pattern burned the turn budget on previous runs and left tickets un-updated.
 
 **5a. Update the description** — replace the ticket description with the full BRD drafted in Step 3.
 
-First, stage the BRD via `write_file`:
+First, stage the BRD with `stage_payload`:
 
 ```
-write_file(
-  path="/app/tmp/brd.md",
+stage_payload(
+  name="brd",
   content="<full BRD text from Step 3>",
   mode="overwrite",
 )
 ```
 
-Then update the ticket in a single `bash_exec` call:
+The tool returns a suffixed key, e.g. `brd-7b3e9c`. Use that key in the next call:
 
 ```bash
-python /jira-cli/jira_cli.py <TICKET_ID> --update-description - < /app/tmp/brd.md
+payload-cat brd-7b3e9c | python /jira-cli/jira_cli.py <TICKET_ID> --update-description -
 ```
 
-If the BRD exceeds the 256 KB `write_file` cap (unlikely but possible for very large tickets), split it across two calls: first `mode="overwrite"` with the first half, then `mode="append"` with the rest.
+If the BRD exceeds the 256 KB `stage_payload` cap (unlikely but possible for very large tickets), split it across two calls: first `mode="overwrite"` with the first half, then `mode="append"` with the rest — both reuse the same `name` so the suffixed key is identical.
 
-**5b. Add a summary comment** — post a comment listing the open questions from Step 4. Stage the comment via `write_file`, then post:
+**5b. Add a summary comment** — post a comment listing the open questions from Step 4. Stage the comment via `stage_payload`, then post:
 
 ```
-write_file(
-  path="/app/tmp/ba_comment.md",
+stage_payload(
+  name="ba_comment",
   content="**BA Analysis Complete**\n\nBusiness requirements have been drafted and added to the ticket description.\n\n**Open Questions (require BA/PO confirmation):**\n<numbered list from Step 4>\n\n*Authored by BA Asset Management agent — please review and confirm.*",
   mode="overwrite",
 )
 ```
 
 ```bash
-python /jira-cli/jira_cli.py <TICKET_ID> --add-comment - < /app/tmp/ba_comment.md
+payload-cat ba_comment-<suffix> | python /jira-cli/jira_cli.py <TICKET_ID> --add-comment -
 ```
 
 Both commands print a confirmation to stderr on success and exit non-zero on failure.
